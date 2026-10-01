@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ASC Research</title>
+<meta name="description" content="Adams Surveying deed and plat research — submit a property, get the deeds, plats and research package.">
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--fg:#1b1f23;--mut:#5b6570;--line:#d9dee3;--acc:#0b5cad;--accfg:#fff;--ok:#1f7a3a;--warn:#a86400;--bad:#a1262d;--chip:#eef1f4}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121416;--card:#1b1e21;--fg:#e6e8ea;--mut:#9aa4ae;--line:#30353b;--acc:#6aa8ff;--accfg:#0b1320;--chip:#262a2f}}
+:root[data-theme="dark"]{--bg:#121416;--card:#1b1e21;--fg:#e6e8ea;--mut:#9aa4ae;--line:#30353b;--acc:#6aa8ff;--accfg:#0b1320;--chip:#262a2f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,"Segoe UI",sans-serif;overflow-wrap:anywhere}
+header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 16px;background:var(--card);border-bottom:1px solid var(--line)}
+header h1{font-size:17px;margin:0;margin-right:auto}
+main{max-width:980px;margin:0 auto;padding:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}
+h2{font-size:16px;margin:0 0 10px}
+input,select{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:9px 10px;max-width:100%}
+button,.btn{font:inherit;border:1px solid var(--acc);background:var(--acc);color:var(--accfg);border-radius:7px;padding:9px 14px;cursor:pointer;text-decoration:none;display:inline-block}
+button.ghost{background:transparent;color:var(--acc)}
+button:disabled{opacity:.5;cursor:default}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.mut{color:var(--mut)} .small{font-size:13px}
+.badge{display:inline-block;padding:2px 9px;border-radius:10px;font-size:12px;font-weight:600;background:var(--chip)}
+.b-done{background:var(--ok);color:#fff}.b-waiting{background:var(--warn);color:#fff}.b-failed{background:var(--bad);color:#fff}
+.b-online{background:var(--ok);color:#fff}.b-offline{background:var(--bad);color:#fff}
+.list a{display:flex;flex-wrap:wrap;gap:4px 12px;padding:10px 4px;border-top:1px solid var(--line);color:var(--fg);text-decoration:none;cursor:pointer}
+.list a.sel{background:var(--chip)}
+table{border-collapse:collapse;width:100%;font-size:14px} td,th{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top} th{color:var(--mut)}
+.scroll{overflow-x:auto}
+.flash{padding:9px 12px;border-radius:7px;margin-bottom:12px;background:var(--chip)}
+.hidden{display:none}
+#q{flex:1;min-width:0;font-size:18px;padding:11px 12px}
+@media (max-width:640px){main{padding:10px 16px}#q{font-size:16px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>ASC Research <span class="mut small">· Adams Surveying</span></h1>
+  <span id="tower" class="badge hidden"></span>
+  <span id="who" class="small mut"></span>
+  <button id="signout" class="ghost hidden">Sign out</button>
+</header>
+<main>
+  <div id="flash" class="flash hidden" role="status"></div>
+
+  <section id="setup" class="card hidden">
+    <h2>Not connected yet</h2>
+    <p class="mut">This page has not been linked to the research service. (config.js is empty.)</p>
+  </section>
+
+  <section id="signin" class="card hidden">
+    <h2>Sign in</h2>
+    <p class="mut small">Enter your work email. We'll email you a sign-in link — no password.</p>
+    <form id="signinForm" class="row">
+      <input id="email" type="email" required autocomplete="email" placeholder="you@company.com" style="flex:1;min-width:220px">
+      <button type="submit">Email me a link</button>
+    </form>
+  </section>
+
+  <section id="app" class="hidden">
+    <div class="card">
+      <form id="searchForm">
+        <label for="q" style="display:block;font-size:18px;font-weight:600;margin-bottom:8px">Property address</label>
+        <div class="row" style="flex-wrap:nowrap">
+          <input id="q" autocomplete="off" required minlength="3" placeholder="2409 Stonegate Cir, Denton TX">
+          <button type="submit" id="go">Research</button>
+          <button type="button" id="reset" class="ghost" title="Clear everything and start a new search">New search</button>
+        </div>
+        <details style="margin-top:12px"><summary class="mut small">More options</summary>
+          <p class="small mut">Also accepts a Google Maps link (drop a pin), coordinates (latitude first) or a parcel/account ID — choose the county for a parcel ID.</p>
+          <div class="row">
+            <label class="small">County <select id="county"><option value="">Detect automatically</option></select></label>
+            <label class="small">Your reference <input id="ref" maxlength="120" placeholder="optional — client, project…"></label>
+          </div>
+        </details>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between"><h2>My searches</h2><span class="small mut" id="updated"></span></div>
+      <div id="list" class="list"></div>
+    </div>
+
+    <div id="detail" class="card hidden"></div>
+  </section>
+
+  <p class="small mut">Research aid only — county parcel lines are tax-map lines, not surveyed boundaries; CAD owner names are not title
+    conclusions; "not found online" is never evidence a record does not exist.</p>
+</main>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="app.js"></script>
+</body>
+</html>
