@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ASC Research</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <meta name="description" content="Adams Surveying deed and plat research — submit a property, get the deeds, plats and research package.">
 <style>
 :root{--bg:#f5f6f8;--card:#fff;--fg:#1b1f23;--mut:#5b6570;--line:#d9dee3;--acc:#0b5cad;--accfg:#fff;--ok:#1f7a3a;--warn:#a86400;--bad:#a1262d;--chip:#eef1f4}
@@ -32,6 +33,13 @@ table{border-collapse:collapse;width:100%;font-size:14px} td,th{border-bottom:1p
 .flash{padding:9px 12px;border-radius:7px;margin-bottom:12px;background:var(--chip)}
 .hidden{display:none}
 #q{flex:1;min-width:0;font-size:18px;padding:11px 12px}
+#bmap{height:440px;border-radius:8px;border:1px solid var(--line);margin:8px 0}
+.drop{border:2px dashed var(--line);border-radius:10px;padding:18px;text-align:center;color:var(--mut);cursor:pointer}
+.drop.over{border-color:var(--acc);color:var(--acc)}
+.note{padding:8px 12px;border-radius:7px;margin:6px 0;font-size:14px}
+.note.block{background:#fdeaea;color:#7a1d22}.note.adv{background:#fff4e0;color:#6b4300}
+@media (prefers-color-scheme:dark){.note.block{background:#3b1a1c;color:#f3c1c4}.note.adv{background:#3a2c12;color:#f1d4a0}}
+.b-accepted{background:var(--ok);color:#fff}.b-needs_review,.b-processing,.b-uploaded{background:var(--warn);color:#fff}.b-rejected{background:var(--bad);color:#fff}
 @media (max-width:640px){main{padding:10px 16px}#q{font-size:16px}}
 </style>
 </head>
@@ -90,6 +98,8 @@ table{border-collapse:collapse;width:100%;font-size:14px} td,th{border-bottom:1p
     conclusions; "not found online" is never evidence a record does not exist.</p>
 </main>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="blockmap.js"></script>
 <script src="config.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="app.js"></script>

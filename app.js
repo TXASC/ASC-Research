@@ -5,7 +5,7 @@
   const cfg = window.ASC_RESEARCH || {};
   const $ = (id) => document.getElementById(id);
   const show = (id, on) => $(id).classList.toggle("hidden", !on);
-  let sb = null, user = null, selected = null, requests = [], pollTimer = null;
+  let sb = null, user = null, selected = null, requests = [], pollTimer = null, uploads = [], renderedKey = "";
 
   function el(tag, attrs, ...kids) {
     const n = document.createElement(tag);
@@ -82,6 +82,10 @@
     ]);
     if (error) { flash("Could not load your searches: " + error.message); return; }
     requests = reqs || [];
+    if (selected) {
+      const { data: ups } = await sb.from("uploads").select("*").eq("request_id", selected).order("created_at");
+      uploads = ups || [];
+    }
     towerBadge(beat);
     drawList();
     if (selected) drawDetail(requests.find((r) => r.id === selected));
@@ -103,7 +107,8 @@
     const list = $("list"); list.replaceChildren();
     if (!requests.length) { list.append(el("p", { class: "mut" }, "No searches yet.")); return; }
     for (const r of requests) {
-      list.append(el("a", { class: r.id === selected ? "sel" : "", onclick: () => { selected = r.id; drawList(); drawDetail(r); } },
+      list.append(el("a", { class: r.id === selected ? "sel" : "", onclick: async () => { selected = r.id; uploads = [];
+          drawList(); await refresh(); drawDetail(requests.find((x) => x.id === r.id), true); } },
         el("strong", { style: "flex:1;min-width:200px" }, r.query),
         r.reference ? el("span", { class: "small mut" }, r.reference) : null,
         el("span", { class: "badge b-" + r.status }, r.plain_status || r.status),
@@ -117,9 +122,13 @@
     window.open(data.signedUrl, "_blank", "noopener");
   }
 
-  function drawDetail(r) {
+  function drawDetail(r, force) {
     const d = $("detail");
-    if (!r) { show("detail", false); return; }
+    if (!r) { show("detail", false); renderedKey = ""; return; }
+    const key = r.id + "|" + r.updated_at + "|" + JSON.stringify(uploads.map((u) => [u.id, u.status, u.association])) +
+                "|" + JSON.stringify(r.drafting || {});
+    if (!force && key === renderedKey) return;            // nothing changed: keep the map zoom and any chosen files
+    renderedKey = key;
     show("detail", true); d.replaceChildren();
     const s = r.summary || {};
     d.append(el("div", { class: "row", style: "justify-content:space-between" },
@@ -151,38 +160,139 @@
         decide(r, "confirm_subject", { parcel_uuid: form.pick.value, reason: reason.value.trim() }); });
       d.append(form);
     }
-    if (s.adjoiners?.length) {
-      d.append(el("h2", { style: "margin-top:14px" }, "Adjoiners"));
+    // Blocking items only when the user can act; advisories are flagged, never blocking.
+    (s.blocking || []).forEach((b) => d.append(el("div", { class: "note block" }, "Action needed: " + b)));
+    if (s.map && s.map.features && s.map.features.length) {
+      d.append(el("h2", { style: "margin-top:14px" }, "Block map"));
+      d.append(el("div", { id: "bmap" }));
+      setTimeout(() => { try { window.renderBlockMap("bmap", s.map); } catch (e) { $("bmap").textContent = "Map unavailable."; } }, 0);
+      d.append(el("p", { class: "small mut" }, "CAD geometry only — visual research aid, not survey geometry. Click a parcel for details."));
+    }
+    if (s.advisories?.length) {
+      d.append(el("h2", { style: "margin-top:10px" }, "Flagged for the surveyor (advisory)"));
+      s.advisories.forEach((a) => d.append(el("div", { class: "note adv" }, a)));
+    }
+    if (s.block?.length) {
+      const c = s.block_counts || {};
+      d.append(el("h2", { style: "margin-top:14px" }, `Block research — ${c.direct_adjoiner || 0} direct adjoiner(s), ${c.block_lot || 0} block lot(s)`));
+      if (s.block_note) d.append(el("div", { class: "note adv" }, s.block_note));
       d.append(el("div", { class: "scroll" }, el("table", {},
-        el("tr", {}, el("th", {}, "Adjoiner"), el("th", {}, "Type"), el("th", {}, "Shared")),
-        s.adjoiners.map((a) => el("tr", {}, el("td", {}, a.label + (a.accounts > 1 ? ` (${a.accounts} accounts)` : "")),
-          el("td", {}, a.classification), el("td", {}, a.shared_ft ? a.shared_ft.toFixed(1) + " ft" : ""))))));
+        el("tr", {}, el("th", {}, "#"), el("th", {}, "Role"), el("th", {}, "Parcel"), el("th", {}, "Address"), el("th", {}, "Legal")),
+        s.block.map((b, n) => el("tr", {}, el("td", {}, n + 1), el("td", {}, b.role),
+          el("td", {}, b.parcel_id + (b.accounts > 1 ? ` (${b.accounts} accounts)` : "")),
+          el("td", { class: "small" }, b.address || ""), el("td", { class: "small" }, b.legal || ""))))));
+    }
+    if (s.boundaries?.length) {
+      d.append(el("h2", { style: "margin-top:14px" }, "Boundaries of the subject"),
+        el("ul", { class: "small" }, s.boundaries.map((b) => el("li", {}, b.type_label + (b.label ? " — " + b.label : "") +
+          (b.shared ? ` (${b.shared.toFixed(1)} ft)` : "") + (b.advisory ? " · advisory" : "")))));
     }
     if (s.instruments?.length) {
       d.append(el("h2", { style: "margin-top:14px" }, "Deeds and plats"));
       d.append(el("div", { class: "scroll" }, el("table", {},
-        el("tr", {}, el("th", {}, "Type"), el("th", {}, "Reference"), el("th", {}, "Status"), el("th", {}, "Official search")),
+        el("tr", {}, el("th", {}, "Type"), el("th", {}, "For"), el("th", {}, "Reference"), el("th", {}, "Status"), el("th", {}, "Official search")),
         s.instruments.map((i) => {
           const url = safeUrl(i.search_url);
           return el("tr", {},
             el("td", {}, i.class),
+            el("td", { class: "small" }, (i.role || "") + (i.parcels?.length ? " " + i.parcels.join(", ") : "")),
             el("td", {}, i.reference || "", i.official_reference ? el("div", { class: "small mut" }, "County record: " + i.official_reference) : null,
               i.filed ? el("div", { class: "small mut" }, "Filed " + i.filed) : null,
-              (i.documents || []).map((x) => el("div", { class: "small" }, "📄 " + x.filename + " (" + x.state.replace(/_/g, " ") + ")"))),
-            el("td", {}, (i.state || "").replace(/_/g, " ")),
+              (i.documents || []).map((x) => el("div", { class: "small" }, "📄 " + x.filename))),
+            el("td", { class: "small" }, i.status_label || ""),
             el("td", {}, url ? el("a", { href: url, target: "_blank", rel: "noopener" }, "Open ↗") : ""));
         }))));
     }
-    if (s.open_items?.length) {
-      d.append(el("h2", { style: "margin-top:14px" }, "Open items"),
-        el("ul", { class: "small" }, s.open_items.map((o) => el("li", {}, `[${o.severity}] ${o.title}`))));
-    }
+    if (s.subject && ["done", "waiting"].includes(r.status)) drawUploads(d, r, s);
     if (r.status === "queued") d.append(el("p", { class: "mut" }, "Waiting for the research computer to pick this up."));
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Upload deeds and plats for drafting
+  function targetOptions(s, docType, selectedId) {
+    const opts = [el("option", { value: "" }, "Match it from the document")];
+    (s.instruments || []).filter((i) => !docType || ["easement", "survey", "other"].includes(docType) || i.class === docType)
+      .forEach((i) => opts.push(el("option", { value: i.target_id, selected: i.target_id === selectedId ? "selected" : null },
+        `${i.class} · ${i.reference || ""}${i.parcels?.length ? " · " + i.parcels.join(", ") : ""}`)));
+    return opts;
+  }
+
+  function drawUploads(d, r, s) {
+    d.append(el("h2", { style: "margin-top:18px" }, "Upload deeds and plats for drafting"));
+    d.append(el("p", { class: "small mut" }, "Download each record from the official search, then drop the PDFs here. " +
+      "We match each file to its record from what's printed in the document — never from the file name — and flag anything that doesn't match."));
+    const queue = el("div", {});
+    const input = el("input", { type: "file", multiple: true, accept: ".pdf,.png,.jpg,.jpeg,.tif,.tiff", class: "hidden" });
+    const drop = el("div", { class: "drop", onclick: () => input.click() }, "Drop PDFs here or click to choose files");
+    ["dragover", "dragenter"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+    ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, () => drop.classList.remove("over")));
+    drop.addEventListener("drop", (e) => { e.preventDefault(); stage(e.dataTransfer.files); });
+    input.addEventListener("change", () => stage(input.files));
+    function stage(files) {
+      [...files].forEach((f) => {
+        const type = el("select", {}, ["deed", "plat", "easement", "survey", "other"].map((t) => el("option", { value: t }, t)));
+        const target = el("select", {}, targetOptions(s, "deed"));
+        type.addEventListener("change", () => target.replaceChildren(...targetOptions(s, type.value)));
+        const row = el("div", { class: "row", style: "padding:6px 0;border-top:1px solid var(--line)" },
+          el("span", { style: "flex:1;min-width:160px" }, f.name), type, target);
+        row._file = f; row._type = type; row._target = target;
+        queue.append(row);
+      });
+      send.disabled = !queue.children.length;
+    }
+    const send = el("button", { disabled: true, onclick: async () => {
+      send.disabled = true;
+      for (const row of [...queue.children]) {
+        const f = row._file;
+        if (f.size > 60 * 1024 * 1024) { flash(f.name + " is larger than 60 MB."); continue; }
+        const safe = f.name.replace(/[^A-Za-z0-9._ -]+/g, "_").slice(-120);
+        const path = `${user.id}/${r.id}/${crypto.randomUUID()}-${safe}`;
+        const up = await sb.storage.from("uploads").upload(path, f, { contentType: f.type || "application/pdf" });
+        if (up.error) { flash("Upload failed for " + f.name + ": " + up.error.message); continue; }
+        const ins = await sb.from("uploads").insert({ request_id: r.id, storage_path: path, filename: f.name.slice(0, 200),
+          doc_type: row._type.value, chosen_target: row._target.value || null });
+        if (ins.error) flash("Could not record " + f.name + ": " + ins.error.message);
+        row.remove();
+      }
+      flash("Uploaded — each file is checked by the research computer in a few seconds.");
+      refresh();
+    } }, "Upload files");
+    d.append(drop, input, queue, el("div", { class: "row", style: "margin-top:8px" }, send));
+
+    if (uploads.length) {
+      const tbl = el("table", {}, el("tr", {}, el("th", {}, "File"), el("th", {}, "Type"), el("th", {}, "Record"), el("th", {}, "Status")));
+      uploads.forEach((u) => {
+        const t = (s.instruments || []).find((i) => i.target_id === (u.association || {}).target_id);
+        const sel = el("select", {}, targetOptions(s, u.doc_type, (u.association || {}).target_id));
+        sel.addEventListener("change", () => sel.value && decide(r, "reassign_upload", { upload_id: u.id, target_id: sel.value }));
+        tbl.append(el("tr", {}, el("td", {}, u.filename), el("td", {}, u.doc_type),
+          el("td", { class: "small" }, t ? `${t.class} ${t.reference || ""}${u.association.suggested ? " (matched from the document)" : ""}` : "—",
+            u.status !== "processing" && u.status !== "uploaded" ? el("div", {}, "Change: ", sel) : null),
+          el("td", {}, el("span", { class: "badge b-" + u.status }, u.status_label || u.status))));
+      });
+      d.append(el("div", { class: "scroll", style: "margin-top:10px" }, tbl));
+    }
+
+    // Drafting: only on an explicit request, after documents are uploaded
+    const dr = r.drafting || {};
+    d.append(el("h2", { style: "margin-top:18px" }, "Drafting"));
+    const ready = uploads.some((u) => u.status === "accepted" && u.doc_type === "deed");
+    const row = el("div", { class: "row" });
+    if (!["queued", "running", "needs_call_review", "drawing"].includes(dr.status))
+      row.append(el("button", { disabled: ready ? null : true, onclick: () => decide(r, "start_drafting", {}) }, "Start drafting"));
+    if (dr.status_label) row.append(el("span", { class: "badge" }, dr.status_label));
+    if (dr.package_path) row.append(el("button", { onclick: () => signed(dr.package_path, "drafting_package.zip") }, "Download DXF package"));
+    d.append(row);
+    if (!ready) d.append(el("p", { class: "small mut" }, "Upload at least the subject's deed (matched and verified) to start drafting."));
+    if (dr.warnings?.length) d.append(el("details", { class: "small" }, el("summary", {}, dr.warnings.length + " drafting warning(s)"),
+      el("ul", {}, dr.warnings.map((w) => el("li", {}, w)))));
   }
 
   async function decide(r, kind, payload) {
     const { error } = await sb.from("decisions").insert({ request_id: r.id, kind, payload });
-    flash(error ? "Could not send: " + error.message : kind === "cancel" ? "Cancel sent." : "Sent — the research continues.");
+    const done = { cancel: "Cancel sent.", reassign_upload: "Re-checking the file against that record…",
+                   start_drafting: "Drafting requested — the research computer will read the deeds." };
+    flash(error ? "Could not send: " + error.message : done[kind] || "Sent — the research continues.");
     refresh();
   }
 
