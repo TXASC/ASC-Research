@@ -189,6 +189,7 @@
       el("h2", {}, (readOnly ? "History: " : "") + r.query), el("span", { class: "badge b-" + r.status }, r.plain_status || r.status)));
     if (s.research_stage && !["failed"].includes(s.research_stage)) d.append(stageBar(s.research_stage));
     if (r.error) d.append(el("div", { class: "flash" }, r.error));
+    (s.notices || []).forEach((n) => d.append(el("div", { class: "note adv" }, n)));
 
     const actions = el("div", { class: "row", style: "margin:8px 0 12px" });
     if (r.package_path) actions.append(el("button", { onclick: () => signed(r.package_path, "research_package.zip") }, "Download package (.zip)"));
