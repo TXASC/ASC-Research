@@ -233,14 +233,20 @@
         el("ul", { class: "small" }, s.boundaries.map((b) => el("li", {}, b.type_label + (b.label ? " — " + b.label : "") +
           (b.shared ? ` (${b.shared.toFixed(1)} ft)` : "") + (b.advisory ? " · advisory" : "")))));
     }
+    if (s.acquisition && s.instruments?.length && ["done", "waiting"].includes(r.status)) drawAcquisition(d, r, s, readOnly);
     if (s.instruments?.length) {
       d.append(el("h2", { style: "margin-top:14px" }, "Deeds and plats"));
       d.append(el("div", { class: "scroll" }, el("table", {},
         el("tr", {}, el("th", {}, "Type"), el("th", {}, "For"), el("th", {}, "Reference"), el("th", {}, "Status"), el("th", {}, "Search")),
         s.instruments.map((i) => {
           const url = safeUrl(i.search_url), fb = safeUrl(i.fallback_url);
+          // One person per clerk search; the joint CAD string is shown only under Search details.
+          const ownerName = i.owner_search && i.owner_search.default;
+          const ownerVerb = ownerName ? `Search owner: ${ownerName}` : "Search by legal description";
+          const ownerNote = ownerName && i.search_strategy !== "plat_by_subdivision" && i.search_basis !== "CAD owner name — verify"
+            ? el("div", { class: "small mut" }, "CAD owner name — verify") : null;
           const verb = i.search_strategy === "exact_document_number" ? `Search ${s.county || "county"} records`
-            : i.search_strategy === "plat_by_subdivision" ? "Search by subdivision" : "Search by owner/legal description";
+            : i.search_strategy === "plat_by_subdivision" ? "Search by subdivision" : ownerVerb;
           return el("tr", {},
             el("td", { style: "white-space:nowrap" }, i.class),
             el("td", { class: "small" }, (i.role || "") + (i.parcels?.length ? " " + i.parcels.join(", ") : "")),
@@ -250,7 +256,8 @@
             el("td", { class: "small" }, i.status_label || ""),
             el("td", {}, url ? el("a", { href: url, target: "_blank", rel: "noopener" }, verb + " ↗") : "",
               i.search_basis ? el("div", { class: "small mut" }, i.search_basis) : null,
-              fb ? el("div", { class: "small" }, el("a", { href: fb, target: "_blank", rel: "noopener" }, "Search by owner/legal ↗")) : null,
+              fb ? el("div", { class: "small" }, el("a", { href: fb, target: "_blank", rel: "noopener" }, ownerVerb + " ↗")) : null,
+              ownerNote,
               (i.fallback_search_terms || []).length ? el("details", { class: "small" }, el("summary", {}, "Search details"),
                 (i.fallback_search_terms || []).map((t) => el("div", {}, t))) : null));
         }))));
@@ -261,6 +268,93 @@
 
   // ---------------------------------------------------------------------------------------------
   // Upload deeds and plats for drafting
+  // ---- Research cart / acquisition workspace (acquire.js holds the rules) ---------------------------------------
+  // ASC never signs in, pays or downloads. One click opens ONE official-portal tab; the list stays here.
+  // The manifest is kept in this browser per signed-in user and request (like Current search), so it survives a
+  // county session timing out or a page refresh.
+  const acqKey = (rid) => `asc-research-acq:${user ? user.id : "anon"}:${rid}`;
+  function loadAcq(rid) { try { return JSON.parse(window.localStorage.getItem(acqKey(rid)) || "null"); } catch { return null; } }
+  function saveAcq(m) { try { window.localStorage.setItem(acqKey(m.request_id), JSON.stringify(m)); return true; } catch { return false; } }
+
+  function drawAcquisition(d, r, s, readOnly) {
+    const A = window.ASCAcquire, acq = s.acquisition;
+    const stored = loadAcq(r.id);
+    let m = A.fromSummary(r.id, s, stored);
+    if (!stored && !readOnly) saveAcq(m);                              // fixes the record list's start stamp
+    const byId = new Map((s.instruments || []).map((i) => [i.target_id, i]));
+    const box = el("div", { class: "card", style: "margin-top:14px" });
+    d.append(box);
+    const commit = (next) => { m = next; if (!saveAcq(m)) flash("This browser would not save the record list — keep this tab open."); paint(); };
+    const copyValue = (it) => it.clerk_search_value || (byId.get(it.target_id)?.owner_search?.default) || it.reference || "";
+    async function copy(it) {
+      const v = copyValue(it);
+      try { await navigator.clipboard.writeText(v); flash("Copied " + v + " — paste it into the county search."); }
+      catch { flash("Copy this into the county search: " + v); }
+      if (!readOnly && it.status === "not_opened") commit(A.mark(m, it.target_id, "searched"));
+    }
+    const statusSel = (it) => {
+      const sel = el("select", { disabled: readOnly || null }, A.STATUSES.map((st) =>
+        el("option", { value: st, selected: it.status === st || null }, A.STATUS_LABEL[st])));
+      sel.addEventListener("change", () => commit(A.mark(m, it.target_id, sel.value)));
+      return sel;
+    };
+    const kind = (it) => `${it.class}${it.role ? " · " + it.role : ""}`;
+
+    function paint() {
+      const exact = m.items.filter((x) => x.clerk_search_value);
+      const manual = m.items.filter((x) => !x.clerk_search_value);
+      const sel = A.ordered(m), nxt = A.next(m);
+      const title = acq.supported ? "Research cart" : "Research cart — " + acq.label;
+      box.replaceChildren(
+        el("h2", {}, title),
+        el("p", { class: "small mut" }, acq.supported
+          ? "Validated record numbers go to the county's own cart in one step. You sign in, review the cost and check out yourself."
+          : acq.unsupported_reason || "",
+          " ASC never signs in, pays or downloads for you. After checkout, upload the PDFs in the upload area below."),
+        el("h3", { class: "small", style: "margin:10px 0 4px" }, "Validated record numbers"),
+        exact.length ? el("div", { class: "scroll" }, el("table", {},
+          el("tr", {}, el("th", {}, "Order"), el("th", {}, "Record"), el("th", {}, "Number"), el("th", {}, "Status"), el("th", {}, "")),
+          exact.map((it) => {
+            const cb = el("input", { type: "checkbox", checked: it.selected || null, disabled: readOnly || null });
+            cb.addEventListener("change", () => commit(A.setSelected(m, it.target_id, cb.checked)));
+            return el("tr", {}, el("td", {}, cb), el("td", { class: "small" }, kind(it)), el("td", {}, it.clerk_search_value),
+              el("td", {}, statusSel(it)), el("td", {}, el("button", { class: "ghost", onclick: () => copy(it) }, "Copy")));
+          }))) : el("p", { class: "small mut" }, "None of these records has a validated county number yet."),
+        manual.length ? el("details", { style: "margin-top:8px" },
+          el("summary", { class: "small" }, `Need a manual search (${manual.length}) — not added unless you tick them`),
+          el("div", { class: "scroll" }, el("table", {},
+            el("tr", {}, el("th", {}, "Add"), el("th", {}, "Record"), el("th", {}, "CAD reference"), el("th", {}, "Search details"), el("th", {}, "Status")),
+            manual.map((it) => {
+              const ins = byId.get(it.target_id) || {};
+              const cb = el("input", { type: "checkbox", checked: it.selected || null, disabled: readOnly || null });
+              cb.addEventListener("change", () => commit(A.setSelected(m, it.target_id, cb.checked, { explicit: true })));
+              return el("tr", {}, el("td", {}, cb), el("td", { class: "small" }, kind(it)),
+                el("td", {}, it.reference || "—", el("div", { class: "small mut" }, ins.search_basis || "Verify against the clerk index")),
+                el("td", { class: "small" }, (ins.fallback_search_terms || []).slice(0, 6).map((t) => el("div", {}, t))),
+                el("td", {}, it.selected ? statusSel(it) : ""));
+            })))) : null,
+        readOnly ? null : el("div", { class: "row", style: "margin-top:10px" },
+          el("button", { disabled: !sel.length || null, onclick: () => {
+            const h = A.handoff(m, acq);
+            const url = safeUrl(h.url);
+            commit(h.manifest);                                        // saved before the tab opens: a failed session keeps the list
+            if (url) window.open(url, "_blank", "noopener");           // exactly one county tab
+            flash(acq.supported ? `Sent ${h.cartItems.length} record(s) to the county cart — review and check out there.`
+              : "County records opened in a new tab. Work down the list below; copy each number into the county search.");
+          } }, acq.supported ? "Build official cart" : "Open acquisition workspace"),
+          el("span", { class: "small mut" }, `${sel.length} selected`)),
+        sel.length ? el("div", { style: "margin-top:10px" },
+          el("div", { class: "small mut" }, `Record list started ${when(m.created_at)}` + (m.handed_off_at ? ` · county portal opened ${when(m.handed_off_at)}` : "") +
+            ` · ${m.county} · ${acq.supported ? "county cart" : "acquisition workspace"}`),
+          nxt && !readOnly ? el("div", { class: "row", style: "margin-top:6px" },
+            el("strong", {}, "Next: "), el("span", {}, `${kind(nxt)} — ${copyValue(nxt)}`),
+            el("button", { onclick: () => copy(nxt) }, "Copy next record")) : null,
+          el("ol", { class: "small", style: "margin:6px 0 0 18px" }, sel.map((it) =>
+            el("li", {}, `${kind(it)} — ${it.reference || ""} · ${it.clerk_search_value ? "validated number" : "manual search (" + (it.confidence || "unverified") + ")"} · ${A.STATUS_LABEL[it.status]}`)))) : null);
+    }
+    paint();
+  }
+
   function targetOptions(s, docType, selectedId) {
     const opts = [el("option", { value: "" }, "Match it from the document")];
     (s.instruments || []).filter((i) => !docType || ["easement", "survey", "other"].includes(docType) || i.class === docType)
