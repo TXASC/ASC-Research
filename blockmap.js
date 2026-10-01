@@ -46,14 +46,36 @@
     return d;
   }
 
-  global.renderBlockMap = function (elId, fc) {
-    const el = document.getElementById(elId);
+  // Geometry signature: re-render only when parcels/boundaries materially change (keeps the user's zoom otherwise).
+  function signature(fc) {
+    return (fc.features || []).map(function (f) {
+      const p = f.properties || {};
+      return p.kind + ":" + (p.role || p.type || "") + ":" + (p.parcel_id || p.label || "");
+    }).sort().join("|");
+  }
+
+  global.renderBlockMap = function (elId, fc, opts) {
+    opts = opts || {};
+    const el = typeof elId === "string" ? document.getElementById(elId) : elId;
     if (!global.L || !el) return null;
-    if (el._map) { el._map.remove(); }
-    const map = L.map(el);
-    el._map = map;
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-      { maxZoom: 20, attribution: "&copy; OpenStreetMap contributors" }).addTo(map);
+    const sig = signature(fc);
+    if (el._map && el._sig === sig && !opts.force) { el._map.invalidateSize(); return el._map; }
+    let map = el._map;
+    const first = !map;
+    if (first) {
+      map = L.map(el);
+      el._map = map;
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        { maxZoom: 20, attribution: "&copy; OpenStreetMap contributors" }).addTo(map);
+      const note = L.control({ position: "bottomleft" });
+      note.onAdd = function () {
+        return node("div", (fc.properties && fc.properties.disclaimer) || "CAD geometry only — visual research aid, not survey geometry.",
+          "background:rgba(255,255,255,.9);color:#333;padding:3px 7px;border-radius:4px;font:11px system-ui,sans-serif");
+      };
+      note.addTo(map);
+    }
+    (el._groups || []).forEach(function (g) { map.removeLayer(g); });
+    if (el._ctl) map.removeControl(el._ctl);
     const groups = {};
     const group = (k) => (groups[k] = groups[k] || L.featureGroup().addTo(map));
     (fc.features || []).forEach(function (f) {
@@ -64,22 +86,29 @@
       } else if (p.kind === "boundary") {
         const st = LINE[p.type] || LINE.unknown_gap;
         L.geoJSON(f, { style: st }).bindPopup(popup(p)).addTo(group(st.group));
+      } else if (p.kind === "search_point") {
+        const c = f.geometry.coordinates;
+        L.circleMarker([c[1], c[0]], { radius: 7, color: "#111", weight: 2, fillColor: "#ffd166", fillOpacity: 1 })
+          .bindTooltip(p.label || "Search location").addTo(group("search"));
       }
     });
+    el._groups = Object.values(groups);
     const overlays = {};
     ["subject", "direct_adjoiner", "block_lot", "candidate", "boundaries", "unresolved"].forEach(function (k) {
       if (groups[k]) overlays[GROUP_LABEL[k]] = groups[k];
     });
-    L.control.layers(null, overlays, { collapsed: false }).addTo(map);
-    const note = L.control({ position: "bottomleft" });
-    note.onAdd = function () {
-      return node("div", (fc.properties && fc.properties.disclaimer) || "CAD geometry only — visual research aid, not survey geometry.",
-        "background:rgba(255,255,255,.9);color:#333;padding:3px 7px;border-radius:4px;font:11px system-ui,sans-serif");
-    };
-    note.addTo(map);
-    const fit = L.featureGroup(["subject", "direct_adjoiner", "block_lot", "candidate"].filter((k) => groups[k]).map((k) => groups[k]));
-    if (fit.getLayers().length) map.fitBounds(fit.getBounds(), { padding: [24, 24], maxZoom: 19 });
-    else map.setView([32.9, -96.9], 9);
+    el._ctl = L.control.layers(null, overlays, { collapsed: false }).addTo(map);
+    const fitKeys = ["subject", "direct_adjoiner", "block_lot", "candidate"].filter((k) => groups[k]);
+    const prevParcels = (el._sig || "").split("|").filter((x) => x.startsWith("parcel:")).length;
+    const nowParcels = sig.split("|").filter((x) => x.startsWith("parcel:")).length;
+    if (first || opts.force || nowParcels !== prevParcels) {            // material change: refit to what we know
+      const fit = L.featureGroup(fitKeys.map((k) => groups[k]));
+      if (fit.getLayers().length) map.fitBounds(fit.getBounds(), { padding: [24, 24], maxZoom: 19 });
+      else if (groups.search) map.setView(groups.search.getLayers()[0].getLatLng(), 17);
+      else map.setView([32.9, -96.9], 9);
+    }
+    el._sig = sig;
+    map.invalidateSize();
     return map;
   };
 })(window);

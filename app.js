@@ -3,9 +3,14 @@
 (function () {
   "use strict";
   const cfg = window.ASC_RESEARCH || {};
+  const S = window.ASCState;
   const $ = (id) => document.getElementById(id);
   const show = (id, on) => $(id).classList.toggle("hidden", !on);
-  let sb = null, user = null, selected = null, requests = [], pollTimer = null, uploads = [], renderedKey = "";
+  let sb = null, user = null, requests = [], pollTimer = null, ui = S.initial();
+  const views = {                       // per-tab detail state: which request, its uploads, last render key
+    current: { box: "currentDetail", id: null, uploads: [], key: "" },
+    history: { box: "historyDetail", id: null, uploads: [], key: "" },
+  };
 
   function el(tag, attrs, ...kids) {
     const n = document.createElement(tag);
@@ -20,20 +25,23 @@
   function flash(msg) { const f = $("flash"); f.textContent = msg || ""; show("flash", !!msg); }
   function when(ts) { if (!ts) return ""; const d = new Date(ts); return d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
   function safeUrl(u) { try { const x = new URL(u); return x.protocol === "https:" ? x.href : null; } catch { return null; } }
+  function persist() { if (user) S.save(user.id, window.localStorage, ui); }
 
   async function init() {
     if (!cfg.supabaseUrl || !cfg.supabaseKey || !window.supabase) { show("setup", true); return; }
     sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey);
-    sb.auth.onAuthStateChange((_e, session) => { user = session?.user || null; render(); });
+    sb.auth.onAuthStateChange((_e, session) => { const was = user && user.id; user = session?.user || null;
+      if (user && user.id !== was) ui = S.load(user.id, window.localStorage); render(); });
     const { data } = await sb.auth.getSession();
     user = data.session?.user || null;
+    if (user) ui = S.load(user.id, window.localStorage);
     render();
   }
 
   function render() {
     show("signin", !user); show("app", !!user); show("signout", !!user);
     $("who").textContent = user ? user.email : "";
-    if (user) { refresh(); clearInterval(pollTimer); pollTimer = setInterval(refresh, 8000); }
+    if (user) { drawTabs(); refresh(); clearInterval(pollTimer); pollTimer = setInterval(refresh, 6000); }
     else { clearInterval(pollTimer); show("tower", false); }
   }
 
@@ -43,17 +51,25 @@
     const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
     flash(error ? "Could not send the link: " + error.message : "Check your email for the sign-in link.");
   });
-  $("signout").addEventListener("click", async () => { await sb.auth.signOut(); selected = null; flash(""); });
+  $("signout").addEventListener("click", async () => { await sb.auth.signOut(); flash(""); });
 
-  // Reset: clear the form and the open result, ready for the next property.
-  function resetSearch() {
-    $("searchForm").reset();
-    $("searchForm").querySelector("details").open = false;
-    selected = null; show("detail", false); flash("");
-    document.querySelectorAll(".list a.sel").forEach((a) => a.classList.remove("sel"));
-    $("q").focus();
+  function drawTabs() {
+    const cur = ui.activeTab === "current";
+    $("tabCurrentBtn").classList.toggle("sel", cur); $("tabCurrentBtn").setAttribute("aria-selected", String(cur));
+    $("tabHistoryBtn").classList.toggle("sel", !cur); $("tabHistoryBtn").setAttribute("aria-selected", String(!cur));
+    show("tabCurrent", cur); show("tabHistory", !cur);
   }
-  $("reset").addEventListener("click", resetSearch);
+  $("tabCurrentBtn").addEventListener("click", () => { ui = S.setTab(ui, "current"); persist(); drawTabs(); refresh(); });
+  $("tabHistoryBtn").addEventListener("click", () => { ui = S.setTab(ui, "history"); persist(); drawTabs(); refresh(); });
+
+  // New search: the current request moves to History (nothing is cancelled or deleted).
+  function newSearch() {
+    ui = S.newSearch(ui); persist();
+    $("searchForm").reset(); $("searchForm").querySelector("details").open = false;
+    views.current.id = null; views.current.key = ""; show("currentDetail", false); flash("");
+    drawTabs(); drawList(); $("q").focus();
+  }
+  $("reset").addEventListener("click", newSearch);
 
   $("searchForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -71,24 +87,32 @@
       return;
     }
     $("searchForm").reset();
-    selected = data.id; flash("Submitted — the research computer will pick it up shortly.");
+    ui = S.submitted(ui, data.id); persist();
+    flash("Submitted — the research computer will pick it up shortly.");
     await refresh();
   });
 
   async function refresh() {
     const [{ data: reqs, error }, { data: beat }] = await Promise.all([
-      sb.from("requests").select("*").order("created_at", { ascending: false }).limit(50),
+      sb.from("requests").select("*").order("created_at", { ascending: false }).limit(100),
       sb.from("door_status").select("*").eq("id", 1).maybeSingle(),
     ]);
     if (error) { flash("Could not load your searches: " + error.message); return; }
     requests = reqs || [];
-    if (selected) {
-      const { data: ups } = await sb.from("uploads").select("*").eq("request_id", selected).order("created_at");
-      uploads = ups || [];
+    ui = S.resolve(ui, requests); persist();
+    views.current.id = ui.currentRequestId;
+    views.history.id = ui.historyDetailId;
+    for (const v of Object.values(views)) {
+      if (v.id) {
+        const { data: ups } = await sb.from("uploads").select("*").eq("request_id", v.id).order("created_at");
+        v.uploads = ups || [];
+      } else v.uploads = [];
     }
     towerBadge(beat);
+    drawTabs();
     drawList();
-    if (selected) drawDetail(requests.find((r) => r.id === selected));
+    drawDetail(requests.find((r) => r.id === views.current.id), views.current, false);
+    drawDetail(requests.find((r) => r.id === views.history.id), views.history, true);
     $("updated").textContent = "updated " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   }
 
@@ -105,14 +129,18 @@
 
   function drawList() {
     const list = $("list"); list.replaceChildren();
-    if (!requests.length) { list.append(el("p", { class: "mut" }, "No searches yet.")); return; }
-    for (const r of requests) {
-      list.append(el("a", { class: r.id === selected ? "sel" : "", onclick: async () => { selected = r.id; uploads = [];
-          drawList(); await refresh(); drawDetail(requests.find((x) => x.id === r.id), true); } },
+    const hist = S.history(ui, requests);
+    $("histCount").textContent = hist.length ? `(${hist.length})` : "";
+    if (!hist.length) { list.append(el("p", { class: "mut" }, "No previous searches.")); return; }
+    for (const r of hist) {
+      const dl = el("span", { class: "row" });
+      if (r.package_path) dl.append(el("button", { class: "ghost small", onclick: (e) => { e.stopPropagation(); signed(r.package_path, "research_package.zip"); } }, "Package"));
+      if (r.report_path) dl.append(el("button", { class: "ghost small", onclick: (e) => { e.stopPropagation(); signed(r.report_path, "RESEARCH_REPORT.html"); } }, "Report"));
+      list.append(el("a", { class: r.id === ui.historyDetailId ? "sel" : "", onclick: () => { ui = S.openHistory(ui, r.id); persist(); views.history.key = ""; refresh(); } },
         el("strong", { style: "flex:1;min-width:200px" }, r.query),
         r.reference ? el("span", { class: "small mut" }, r.reference) : null,
         el("span", { class: "badge b-" + r.status }, r.plain_status || r.status),
-        el("span", { class: "small mut" }, when(r.created_at))));
+        el("span", { class: "small mut" }, when(r.created_at)), dl));
     }
   }
 
@@ -122,25 +150,42 @@
     window.open(data.signedUrl, "_blank", "noopener");
   }
 
-  function drawDetail(r, force) {
-    const d = $("detail");
-    if (!r) { show("detail", false); renderedKey = ""; return; }
+  const STAGE_ORDER = [["submitted", "Located"], ["subject_candidates", "Subject"], ["boundaries", "Boundaries"],
+                       ["adjoiners", "Adjoiners"], ["block", "Block"], ["documents", "Deeds & plats"], ["complete", "Done"]];
+  function stageBar(rs) {
+    const order = STAGE_ORDER.map((x) => x[0]);
+    const norm = { locating: "submitted", subject_confirmed: "subject_candidates" }[rs] || rs;
+    const at = order.indexOf(norm);
+    return el("div", { class: "stage" }, STAGE_ORDER.map(([k, label], i) =>
+      el("span", { class: i < at ? "done" : i === at ? "on" : "" }, label)));
+  }
+
+  function drawDetail(r, view, readOnly) {
+    const d = $(view.box);
+    if (!r) { show(view.box, false); view.key = ""; return; }
+    const uploads = view.uploads;
     const key = r.id + "|" + r.updated_at + "|" + JSON.stringify(uploads.map((u) => [u.id, u.status, u.association])) +
                 "|" + JSON.stringify(r.drafting || {});
-    if (!force && key === renderedKey) return;            // nothing changed: keep the map zoom and any chosen files
-    renderedKey = key;
-    show("detail", true); d.replaceChildren();
+    if (key === view.key) return;                       // nothing changed: keep the map view and any chosen files
+    view.key = key;
+    show(view.box, true);
+    const mapNode = d._mapNode && d._mapReq === r.id ? d._mapNode : el("div", { class: "bmap" });
+    d._mapNode = mapNode; d._mapReq = r.id;
+    d.replaceChildren();
     const s = r.summary || {};
     d.append(el("div", { class: "row", style: "justify-content:space-between" },
-      el("h2", {}, r.query), el("span", { class: "badge b-" + r.status }, r.plain_status || r.status)));
+      el("h2", {}, (readOnly ? "History: " : "") + r.query), el("span", { class: "badge b-" + r.status }, r.plain_status || r.status)));
+    if (s.research_stage && !["failed"].includes(s.research_stage)) d.append(stageBar(s.research_stage));
     if (r.error) d.append(el("div", { class: "flash" }, r.error));
 
     const actions = el("div", { class: "row", style: "margin:8px 0 12px" });
     if (r.package_path) actions.append(el("button", { onclick: () => signed(r.package_path, "research_package.zip") }, "Download package (.zip)"));
     if (r.report_path) actions.append(el("button", { class: "ghost", onclick: () => signed(r.report_path, "RESEARCH_REPORT.html") }, "Download report"));
-    if (["queued", "running", "waiting"].includes(r.status))
+    if (!readOnly && ["queued", "running", "waiting"].includes(r.status))
       actions.append(el("button", { class: "ghost", onclick: () => decide(r, "cancel", {}) }, "Cancel"));
-    actions.append(el("button", { class: "ghost", onclick: resetSearch }, "New search"));
+    if (readOnly) actions.append(el("button", { class: "ghost", onclick: () => { ui = S.makeCurrent(ui, r.id); persist();
+      views.current.key = ""; refresh(); } }, "Make this the current search"));
+    else actions.append(el("button", { class: "ghost", onclick: newSearch }, "New search"));
     d.append(actions);
 
     if (s.subject) {
@@ -148,7 +193,7 @@
         el("p", {}, `${s.county || ""} parcel ${s.subject.parcel_id || ""} — ${s.subject.situs || ""}`),
         el("p", { class: "small mut" }, `${s.subject.legal || ""}${s.subject.owner ? " · CAD owner: " + s.subject.owner : ""}`));
     }
-    if (r.status === "waiting" && s.candidates?.length) {
+    if (!readOnly && r.status === "waiting" && s.candidates?.length) {
       const form = el("form", {});
       form.append(el("p", {}, s.decision || "Choose the subject parcel."));
       s.candidates.forEach((c, i) => form.append(el("label", { style: "display:block;padding:6px 0;border-top:1px solid var(--line)" },
@@ -162,10 +207,11 @@
     }
     // Blocking items only when the user can act; advisories are flagged, never blocking.
     (s.blocking || []).forEach((b) => d.append(el("div", { class: "note block" }, "Action needed: " + b)));
-    if (s.map && s.map.features && s.map.features.length) {
-      d.append(el("h2", { style: "margin-top:14px" }, "Block map"));
-      d.append(el("div", { id: "bmap" }));
-      setTimeout(() => { try { window.renderBlockMap("bmap", s.map); } catch (e) { $("bmap").textContent = "Map unavailable."; } }, 0);
+    if (s.map && s.map.features && s.map.features.length) {         // interim map while researching, final map after
+      d.append(el("h2", { style: "margin-top:14px" }, s.research_stage === "complete" ? "Block map" : "Research map",
+        s.stage_label && s.research_stage !== "complete" ? el("span", { class: "small mut" }, " · " + s.stage_label) : null));
+      d.append(mapNode);
+      setTimeout(() => { try { window.renderBlockMap(mapNode, s.map); } catch (e) { mapNode.textContent = "Map unavailable."; } }, 0);
       d.append(el("p", { class: "small mut" }, "CAD geometry only — visual research aid, not survey geometry. Click a parcel for details."));
     }
     if (s.advisories?.length) {
@@ -190,20 +236,26 @@
     if (s.instruments?.length) {
       d.append(el("h2", { style: "margin-top:14px" }, "Deeds and plats"));
       d.append(el("div", { class: "scroll" }, el("table", {},
-        el("tr", {}, el("th", {}, "Type"), el("th", {}, "For"), el("th", {}, "Reference"), el("th", {}, "Status"), el("th", {}, "Official search")),
+        el("tr", {}, el("th", {}, "Type"), el("th", {}, "For"), el("th", {}, "Reference"), el("th", {}, "Status"), el("th", {}, "Search")),
         s.instruments.map((i) => {
-          const url = safeUrl(i.search_url);
+          const url = safeUrl(i.search_url), fb = safeUrl(i.fallback_url);
+          const verb = i.search_strategy === "exact_document_number" ? `Search ${s.county || "county"} records`
+            : i.search_strategy === "plat_by_subdivision" ? "Search by subdivision" : "Search by owner/legal description";
           return el("tr", {},
-            el("td", {}, i.class),
+            el("td", { style: "white-space:nowrap" }, i.class),
             el("td", { class: "small" }, (i.role || "") + (i.parcels?.length ? " " + i.parcels.join(", ") : "")),
-            el("td", {}, i.reference || "", i.official_reference ? el("div", { class: "small mut" }, "County record: " + i.official_reference) : null,
+            el("td", {}, i.cad_reference_raw || i.reference || "", i.official_reference ? el("div", { class: "small mut" }, "County record: " + i.official_reference) : null,
               i.filed ? el("div", { class: "small mut" }, "Filed " + i.filed) : null,
               (i.documents || []).map((x) => el("div", { class: "small" }, "📄 " + x.filename))),
             el("td", { class: "small" }, i.status_label || ""),
-            el("td", {}, url ? el("a", { href: url, target: "_blank", rel: "noopener" }, "Open ↗") : ""));
+            el("td", {}, url ? el("a", { href: url, target: "_blank", rel: "noopener" }, verb + " ↗") : "",
+              i.search_basis ? el("div", { class: "small mut" }, i.search_basis) : null,
+              fb ? el("div", { class: "small" }, el("a", { href: fb, target: "_blank", rel: "noopener" }, "Search by owner/legal ↗")) : null,
+              (i.fallback_search_terms || []).length ? el("details", { class: "small" }, el("summary", {}, "Search details"),
+                (i.fallback_search_terms || []).map((t) => el("div", {}, t))) : null));
         }))));
     }
-    if (s.subject && ["done", "waiting"].includes(r.status)) drawUploads(d, r, s);
+    if (!readOnly && s.subject && ["done", "waiting"].includes(r.status)) drawUploads(d, r, s, uploads);
     if (r.status === "queued") d.append(el("p", { class: "mut" }, "Waiting for the research computer to pick this up."));
   }
 
@@ -217,7 +269,7 @@
     return opts;
   }
 
-  function drawUploads(d, r, s) {
+  function drawUploads(d, r, s, uploads) {
     d.append(el("h2", { style: "margin-top:18px" }, "Upload deeds and plats for drafting"));
     d.append(el("p", { class: "small mut" }, "Download each record from the official search, then drop the PDFs here. " +
       "We match each file to its record from what's printed in the document — never from the file name — and flag anything that doesn't match."));

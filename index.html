@@ -33,7 +33,13 @@ table{border-collapse:collapse;width:100%;font-size:14px} td,th{border-bottom:1p
 .flash{padding:9px 12px;border-radius:7px;margin-bottom:12px;background:var(--chip)}
 .hidden{display:none}
 #q{flex:1;min-width:0;font-size:18px;padding:11px 12px}
-#bmap{height:440px;border-radius:8px;border:1px solid var(--line);margin:8px 0}
+.bmap{height:440px;border-radius:8px;border:1px solid var(--line);margin:8px 0}
+.tabs{display:flex;gap:6px;align-items:center;margin-bottom:12px;border-bottom:1px solid var(--line)}
+.tab{background:transparent;color:var(--fg);border:0;border-bottom:3px solid transparent;border-radius:0;padding:9px 12px}
+.tab.sel{border-bottom-color:var(--acc);color:var(--acc);font-weight:600}
+.stage{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+.stage span{font-size:12px;padding:2px 8px;border-radius:10px;background:var(--chip);color:var(--mut)}
+.stage span.on{background:var(--acc);color:var(--accfg)}.stage span.done{background:var(--chip);color:var(--fg)}
 .drop{border:2px dashed var(--line);border-radius:10px;padding:18px;text-align:center;color:var(--mut);cursor:pointer}
 .drop.over{border-color:var(--acc);color:var(--acc)}
 .note{padding:8px 12px;border-radius:7px;margin:6px 0;font-size:14px}
@@ -68,30 +74,40 @@ table{border-collapse:collapse;width:100%;font-size:14px} td,th{border-bottom:1p
   </section>
 
   <section id="app" class="hidden">
-    <div class="card">
-      <form id="searchForm">
-        <label for="q" style="display:block;font-size:18px;font-weight:600;margin-bottom:8px">Property address</label>
-        <div class="row" style="flex-wrap:nowrap">
-          <input id="q" autocomplete="off" required minlength="3" placeholder="2409 Stonegate Cir, Denton TX">
-          <button type="submit" id="go">Research</button>
-          <button type="button" id="reset" class="ghost" title="Clear everything and start a new search">New search</button>
-        </div>
-        <details style="margin-top:12px"><summary class="mut small">More options</summary>
-          <p class="small mut">Also accepts a Google Maps link (drop a pin), coordinates (latitude first) or a parcel/account ID — choose the county for a parcel ID.</p>
-          <div class="row">
-            <label class="small">County <select id="county"><option value="">Detect automatically</option></select></label>
-            <label class="small">Your reference <input id="ref" maxlength="120" placeholder="optional — client, project…"></label>
+    <nav class="tabs" role="tablist">
+      <button id="tabCurrentBtn" role="tab" class="tab sel" aria-selected="true">Current search</button>
+      <button id="tabHistoryBtn" role="tab" class="tab" aria-selected="false">History <span id="histCount" class="mut small"></span></button>
+      <span class="small mut" id="updated" style="margin-left:auto"></span>
+    </nav>
+
+    <div id="tabCurrent" role="tabpanel">
+      <div class="card">
+        <form id="searchForm">
+          <label for="q" style="display:block;font-size:18px;font-weight:600;margin-bottom:8px">Property address</label>
+          <div class="row" style="flex-wrap:nowrap">
+            <input id="q" autocomplete="off" required minlength="3" placeholder="2409 Stonegate Cir, Denton TX">
+            <button type="submit" id="go">Research</button>
+            <button type="button" id="reset" class="ghost" title="Start a new search — the current one stays in History">New search</button>
           </div>
-        </details>
-      </form>
+          <details style="margin-top:12px"><summary class="mut small">More options</summary>
+            <p class="small mut">Also accepts a Google Maps link (drop a pin), coordinates (latitude first) or a parcel/account ID — choose the county for a parcel ID.</p>
+            <div class="row">
+              <label class="small">County <select id="county"><option value="">Detect automatically</option></select></label>
+              <label class="small">Your reference <input id="ref" maxlength="120" placeholder="optional — client, project…"></label>
+            </div>
+          </details>
+        </form>
+      </div>
+      <div id="currentDetail" class="card hidden"></div>
     </div>
 
-    <div class="card">
-      <div class="row" style="justify-content:space-between"><h2>My searches</h2><span class="small mut" id="updated"></span></div>
-      <div id="list" class="list"></div>
+    <div id="tabHistory" role="tabpanel" class="hidden">
+      <div class="card">
+        <h2>Previous searches</h2>
+        <div id="list" class="list"></div>
+      </div>
+      <div id="historyDetail" class="card hidden"></div>
     </div>
-
-    <div id="detail" class="card hidden"></div>
   </section>
 
   <p class="small mut">Research aid only — county parcel lines are tax-map lines, not surveyed boundaries; CAD owner names are not title
@@ -100,6 +116,7 @@ table{border-collapse:collapse;width:100%;font-size:14px} td,th{border-bottom:1p
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="blockmap.js"></script>
+<script src="uistate.js"></script>
 <script src="config.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="app.js"></script>
