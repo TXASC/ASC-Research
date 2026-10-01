@@ -268,7 +268,8 @@
           const ownerNote = ownerName && i.search_strategy !== "plat_by_subdivision" && i.search_basis !== "CAD owner name — verify"
             ? el("div", { class: "small mut" }, "CAD owner name — verify") : null;
           const verb = i.search_strategy === "exact_document_number" ? `Search ${s.county || "county"} records`
-            : i.search_strategy === "plat_by_subdivision" ? "Search by subdivision" : ownerVerb;
+            : i.search_strategy === "plat_by_subdivision" ? "Search by subdivision"
+            : i.search_value ? `Try document number: ${i.search_value}` : ownerVerb;
           return el("tr", {},
             el("td", { style: "white-space:nowrap" }, i.class),
             el("td", { class: "small" }, (i.role || "") + (i.parcels?.length ? " " + i.parcels.join(", ") : "")),
@@ -307,7 +308,9 @@
     const box = el("div", { class: "card", style: "margin-top:14px" });
     d.append(box);
     const commit = (next) => { m = next; if (!saveAcq(m)) flash("This browser would not save the record list — keep this tab open."); paint(); };
-    const copyValue = (it) => it.clerk_search_value || (byId.get(it.target_id)?.owner_search?.default) || it.reference || "";
+    // Document/instrument number first (validated or just a number to try); the owner name is the fallback.
+    const copyValue = (it) => it.clerk_search_value || byId.get(it.target_id)?.search_value
+      || (byId.get(it.target_id)?.owner_search?.default) || it.reference || "";
     async function copy(it) {
       const v = copyValue(it);
       try { await navigator.clipboard.writeText(v); flash("Copied " + v + " — paste it into the county search."); }
