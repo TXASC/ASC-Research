@@ -43,8 +43,9 @@
   function render() {
     show("signin", !user); show("app", !!user); show("signout", !!user);
     $("who").textContent = user ? user.email : "";
-    if (user) { drawTabs(); refresh(); clearInterval(pollTimer); pollTimer = setInterval(refresh, 6000); }
-    else { clearInterval(pollTimer); show("tower", false); }
+    clearTimeout(pollTimer);
+    if (user) { drawTabs(); poll(); }
+    else show("tower", false);
   }
 
   $("signinForm").addEventListener("submit", async (e) => {
@@ -91,8 +92,17 @@
     clearForm();
     ui = S.submitted(ui, data.id); persist();
     flash("Submitted — the research computer will pick it up shortly.");
-    await refresh();
+    await poll();
   });
+
+  // Poll quickly while the current search is running so the map visibly builds; slowly otherwise.
+  async function poll() {
+    clearTimeout(pollTimer);
+    try { await refresh(); } catch (e) { /* keep polling */ }
+    const cur = requests.find((r) => r.id === views.current.id);
+    const busy = cur && ["queued", "running"].includes(cur.status);
+    if (user) pollTimer = setTimeout(poll, busy ? 2000 : 6000);
+  }
 
   async function refresh() {
     const [{ data: reqs, error }, { data: beat }] = await Promise.all([
@@ -190,6 +200,19 @@
     else actions.append(el("button", { class: "ghost", onclick: newSearch }, "New search"));
     d.append(actions);
 
+    // Live research map: shown from the moment a search starts. It flies to the address, then lights up the subject,
+    // the direct adjoiners and the block as the research computer finds them (blockmap.js opts.animate).
+    const active = ["queued", "running"].includes(r.status);
+    const hasMap = !!(s.map && s.map.features && s.map.features.length);
+    if (hasMap || (active && !readOnly)) {
+      d.append(el("h2", { style: "margin-top:14px" }, s.research_stage === "complete" ? "Block map" : "Research map"));
+      d.append(mapNode);
+      const status = active ? (s.stage_label || (r.status === "queued" ? "Waiting for the research computer…" : r.plain_status || "Researching…")) : null;
+      setTimeout(() => { try { window.renderBlockMap(mapNode, s.map, { animate: !readOnly, status }); }
+                         catch (e) { mapNode.textContent = "Map unavailable."; } }, 0);
+      d.append(el("p", { class: "small mut" }, "CAD geometry only — visual research aid, not survey geometry. Click a parcel for details."));
+    }
+
     if (s.subject) {
       d.append(el("h2", {}, "Subject"),
         el("p", {}, `${s.county || ""} parcel ${s.subject.parcel_id || ""} — ${s.subject.situs || ""}`),
@@ -209,13 +232,6 @@
     }
     // Blocking items only when the user can act; advisories are flagged, never blocking.
     (s.blocking || []).forEach((b) => d.append(el("div", { class: "note block" }, "Action needed: " + b)));
-    if (s.map && s.map.features && s.map.features.length) {         // interim map while researching, final map after
-      d.append(el("h2", { style: "margin-top:14px" }, s.research_stage === "complete" ? "Block map" : "Research map",
-        s.stage_label && s.research_stage !== "complete" ? el("span", { class: "small mut" }, " · " + s.stage_label) : null));
-      d.append(mapNode);
-      setTimeout(() => { try { window.renderBlockMap(mapNode, s.map); } catch (e) { mapNode.textContent = "Map unavailable."; } }, 0);
-      d.append(el("p", { class: "small mut" }, "CAD geometry only — visual research aid, not survey geometry. Click a parcel for details."));
-    }
     if (s.advisories?.length) {
       d.append(el("h2", { style: "margin-top:10px" }, "Flagged for the surveyor (advisory)"));
       s.advisories.forEach((a) => d.append(el("div", { class: "note adv" }, a)));
