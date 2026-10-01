@@ -3,59 +3,83 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ASC Research</title>
+<title>Field Notes · ASC</title>
+<meta name="theme-color" content="#0b0806">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=Source+Sans+3:wght@400;600&display=swap">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<meta name="description" content="Adams Surveying deed and plat research — submit a property, get the deeds, plats and research package.">
+<meta name="description" content="Field Notes — Adams Surveying land records research: submit a property, get the deeds, plats and research package.">
 <style>
-:root{--bg:#f5f6f8;--card:#fff;--fg:#1b1f23;--mut:#5b6570;--line:#d9dee3;--acc:#0b5cad;--accfg:#fff;--ok:#1f7a3a;--warn:#a86400;--bad:#a1262d;--chip:#eef1f4}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121416;--card:#1b1e21;--fg:#e6e8ea;--mut:#9aa4ae;--line:#30353b;--acc:#6aa8ff;--accfg:#0b1320;--chip:#262a2f}}
-:root[data-theme="dark"]{--bg:#121416;--card:#1b1e21;--fg:#e6e8ea;--mut:#9aa4ae;--line:#30353b;--acc:#6aa8ff;--accfg:#0b1320;--chip:#262a2f}
+/* Field Notes theme — matched to banner.jpg: archive-dark leather, parchment text, the banner's red rule, brass. */
+:root{--bg:#120d09;--card:#1c1510;--fg:#efe4cf;--mut:#b3a28a;--line:#3a2c21;--acc:#a01c22;--acc2:#c0282f;--accfg:#f8eedd;
+  --brass:#c99a4b;--ok:#4d7c3c;--warn:#b0782a;--bad:#a1262d;--chip:#2a2018;--field:#16100c;
+  --head:"Oswald","Arial Narrow",system-ui,sans-serif;color-scheme:dark}
+:root[data-theme="light"]{--bg:#f2eadb;--card:#fbf6ec;--fg:#2b1f15;--mut:#6e5c48;--line:#ddd0b8;--acc:#8f1a1f;--acc2:#a8232a;
+  --accfg:#fff8ec;--brass:#8a6420;--chip:#ece2cf;--field:#fffdf8;color-scheme:light}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,"Segoe UI",sans-serif;overflow-wrap:anywhere}
-header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 16px;background:var(--card);border-bottom:1px solid var(--line)}
-header h1{font-size:17px;margin:0;margin-right:auto}
-main{max-width:980px;margin:0 auto;padding:16px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}
-h2{font-size:16px;margin:0 0 10px}
-input,select{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:9px 10px;max-width:100%}
-button,.btn{font:inherit;border:1px solid var(--acc);background:var(--acc);color:var(--accfg);border-radius:7px;padding:9px 14px;cursor:pointer;text-decoration:none;display:inline-block}
-button.ghost{background:transparent;color:var(--acc)}
-button:disabled{opacity:.5;cursor:default}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 "Source Sans 3",system-ui,"Segoe UI",sans-serif;overflow-wrap:anywhere;
+  background-image:radial-gradient(ellipse at top,rgba(201,154,75,.07),transparent 60%)}
+a{color:var(--brass)}
+header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:8px 16px;background:#0b0806;border-bottom:1px solid var(--line)}
+header h1{font:600 16px/1.2 var(--head);letter-spacing:.14em;text-transform:uppercase;margin:0;margin-right:auto;color:var(--fg)}
+header h1 span{color:var(--brass);letter-spacing:.08em;font-weight:400}
+.banner{position:relative;background:#0b0806;border-bottom:3px solid var(--acc);line-height:0}
+.banner img{display:block;width:100%;height:auto;max-height:300px;object-fit:cover;object-position:center}
+main{max-width:1000px;margin:0 auto;padding:18px 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:18px;margin-bottom:14px;
+  box-shadow:0 1px 0 rgba(255,255,255,.03) inset,0 8px 24px rgba(0,0,0,.25)}
+h2{font:600 15px/1.3 var(--head);letter-spacing:.12em;text-transform:uppercase;margin:0 0 10px;color:var(--brass)}
+h3{font-family:var(--head);letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
+input,select{font:inherit;color:var(--fg);background:var(--field);border:1px solid var(--line);border-radius:5px;padding:9px 10px;max-width:100%}
+input:focus,select:focus{outline:2px solid var(--brass);outline-offset:1px;border-color:var(--brass)}
+button,.btn{font:500 14px/1.2 var(--head);letter-spacing:.1em;text-transform:uppercase;border:1px solid var(--acc);background:var(--acc);
+  color:var(--accfg);border-radius:5px;padding:10px 16px;cursor:pointer;text-decoration:none;display:inline-block}
+button:hover:not(:disabled){background:var(--acc2);border-color:var(--acc2)}
+button.ghost{background:transparent;color:var(--fg);border-color:var(--brass)}
+button.ghost:hover:not(:disabled){background:var(--chip);color:var(--fg)}
+button:disabled{opacity:.45;cursor:default}
 .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .mut{color:var(--mut)} .small{font-size:13px}
-.badge{display:inline-block;padding:2px 9px;border-radius:10px;font-size:12px;font-weight:600;background:var(--chip)}
+.badge{display:inline-block;padding:2px 9px;border-radius:3px;font:600 11px/1.6 var(--head);letter-spacing:.08em;text-transform:uppercase;background:var(--chip);color:var(--fg)}
 .b-done{background:var(--ok);color:#fff}.b-waiting{background:var(--warn);color:#fff}.b-failed{background:var(--bad);color:#fff}
 .b-online{background:var(--ok);color:#fff}.b-offline{background:var(--bad);color:#fff}
-.list a{display:flex;flex-wrap:wrap;gap:4px 12px;padding:10px 4px;border-top:1px solid var(--line);color:var(--fg);text-decoration:none;cursor:pointer}
-.list a.sel{background:var(--chip)}
-table{border-collapse:collapse;width:100%;font-size:14px} td,th{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top} th{color:var(--mut)}
+.list a{display:flex;flex-wrap:wrap;gap:4px 12px;padding:10px 6px;border-top:1px solid var(--line);color:var(--fg);text-decoration:none;cursor:pointer}
+.list a:hover{background:var(--chip)} .list a.sel{background:var(--chip);box-shadow:inset 3px 0 0 var(--acc)}
+table{border-collapse:collapse;width:100%;font-size:14px} td,th{border-bottom:1px solid var(--line);padding:7px 6px;text-align:left;vertical-align:top}
+th{color:var(--brass);font:500 12px/1.4 var(--head);letter-spacing:.1em;text-transform:uppercase}
 .scroll{overflow-x:auto}
-.flash{padding:9px 12px;border-radius:7px;margin-bottom:12px;background:var(--chip)}
+.flash{padding:10px 14px;border-radius:5px;margin-bottom:12px;background:var(--chip);border-left:3px solid var(--brass)}
 .hidden{display:none}
-#q{flex:1;min-width:0;font-size:18px;padding:11px 12px}
-.bmap{height:440px;border-radius:8px;border:1px solid var(--line);margin:8px 0}
-.tabs{display:flex;gap:6px;align-items:center;margin-bottom:12px;border-bottom:1px solid var(--line)}
-.tab{background:transparent;color:var(--fg);border:0;border-bottom:3px solid transparent;border-radius:0;padding:9px 12px}
-.tab.sel{border-bottom-color:var(--acc);color:var(--acc);font-weight:600}
+#q{flex:1;min-width:0;font-size:18px;padding:12px 13px}
+.bmap{height:440px;border-radius:5px;border:1px solid var(--line);margin:8px 0}
+.tabs{display:flex;gap:6px;align-items:center;margin-bottom:14px;border-bottom:1px solid var(--line)}
+.tab{background:transparent;color:var(--mut);border:0;border-bottom:3px solid transparent;border-radius:0;padding:10px 12px}
+.tab:hover:not(:disabled){background:transparent;color:var(--fg)}
+.tab.sel{border-bottom-color:var(--acc);color:var(--fg);font-weight:600}
 .stage{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
-.stage span{font-size:12px;padding:2px 8px;border-radius:10px;background:var(--chip);color:var(--mut)}
+.stage span{font:500 11px/1.6 var(--head);letter-spacing:.08em;text-transform:uppercase;padding:2px 8px;border-radius:3px;background:var(--chip);color:var(--mut)}
 .stage span.on{background:var(--acc);color:var(--accfg)}.stage span.done{background:var(--chip);color:var(--fg)}
-.drop{border:2px dashed var(--line);border-radius:10px;padding:18px;text-align:center;color:var(--mut);cursor:pointer}
-.drop.over{border-color:var(--acc);color:var(--acc)}
-.note{padding:8px 12px;border-radius:7px;margin:6px 0;font-size:14px}
-.note.block{background:#fdeaea;color:#7a1d22}.note.adv{background:#fff4e0;color:#6b4300}
-@media (prefers-color-scheme:dark){.note.block{background:#3b1a1c;color:#f3c1c4}.note.adv{background:#3a2c12;color:#f1d4a0}}
+.drop{border:2px dashed var(--line);border-radius:6px;padding:20px;text-align:center;color:var(--mut);cursor:pointer}
+.drop.over{border-color:var(--brass);color:var(--brass)}
+.note{padding:8px 12px;border-radius:5px;margin:6px 0;font-size:14px}
+.note.block{background:#3b1a1c;color:#f3c1c4}.note.adv{background:#3a2c12;color:#f1d4a0}
+:root[data-theme="light"] .note.block{background:#fdeaea;color:#7a1d22}:root[data-theme="light"] .note.adv{background:#fff4e0;color:#6b4300}
 .b-accepted{background:var(--ok);color:#fff}.b-needs_review,.b-processing,.b-uploaded{background:var(--warn);color:#fff}.b-rejected{background:var(--bad);color:#fff}
-@media (max-width:640px){main{padding:10px 16px}#q{font-size:16px}}
+details summary{cursor:pointer}
+footer.fine{max-width:1000px;margin:0 auto;padding:0 16px 24px}
+@media (max-width:640px){main{padding:12px 16px}#q{font-size:16px;flex:1 1 100%}.banner img{max-height:none}
+  #searchForm .row{flex-wrap:wrap!important}#searchForm .row button{flex:1 1 auto}header{gap:6px 10px}}
 </style>
 </head>
 <body>
 <header>
-  <h1>ASC Research <span class="mut small">· Adams Surveying</span></h1>
+  <h1>Field Notes <span>· Adams Surveying</span></h1>
   <span id="tower" class="badge hidden"></span>
   <span id="who" class="small mut"></span>
   <button id="signout" class="ghost hidden">Sign out</button>
 </header>
+<div class="banner"><img src="banner.jpg" srcset="banner-1000.jpg 1000w, banner.jpg 2000w" sizes="100vw"
+  width="2000" height="667" alt="Field Notes — Land Records Research"></div>
 <main>
   <div id="flash" class="flash hidden" role="status"></div>
 
@@ -87,7 +111,7 @@ table{border-collapse:collapse;width:100%;font-size:14px} td,th{border-bottom:1p
           <div class="row" style="flex-wrap:nowrap">
             <input id="q" autocomplete="off" required minlength="3" placeholder="2409 Stonegate Cir, Denton TX">
             <button type="submit" id="go">Research</button>
-            <button type="button" id="reset" class="ghost" title="Start a new search — the current one stays in History">New search</button>
+            <button type="button" id="newSearchBtn" class="ghost" title="Start a new search — the current one stays in History">New search</button>
           </div>
           <details style="margin-top:12px"><summary class="mut small">More options</summary>
             <p class="small mut">Also accepts a Google Maps link (drop a pin), coordinates (latitude first) or a parcel/account ID — choose the county for a parcel ID.</p>

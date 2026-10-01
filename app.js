@@ -26,6 +26,8 @@
   function when(ts) { if (!ts) return ""; const d = new Date(ts); return d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
   function safeUrl(u) { try { const x = new URL(u); return x.protocol === "https:" ? x.href : null; } catch { return null; } }
   function persist() { if (user) S.save(user.id, window.localStorage, ui); }
+  // Call the prototype method: a control named/id'd "reset" inside a form shadows form.reset() (that broke submit).
+  function clearForm() { HTMLFormElement.prototype.reset.call($("searchForm")); }
 
   async function init() {
     if (!cfg.supabaseUrl || !cfg.supabaseKey || !window.supabase) { show("setup", true); return; }
@@ -65,11 +67,11 @@
   // New search: the current request moves to History (nothing is cancelled or deleted).
   function newSearch() {
     ui = S.newSearch(ui); persist();
-    $("searchForm").reset(); $("searchForm").querySelector("details").open = false;
+    clearForm(); $("searchForm").querySelector("details").open = false;
     views.current.id = null; views.current.key = ""; show("currentDetail", false); flash("");
     drawTabs(); drawList(); $("q").focus();
   }
-  $("reset").addEventListener("click", newSearch);
+  $("newSearchBtn").addEventListener("click", newSearch);
 
   $("searchForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -86,7 +88,7 @@
         : "Could not submit: " + error.message);
       return;
     }
-    $("searchForm").reset();
+    clearForm();
     ui = S.submitted(ui, data.id); persist();
     flash("Submitted — the research computer will pick it up shortly.");
     await refresh();
