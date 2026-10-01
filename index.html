@@ -90,10 +90,11 @@ footer.fine{max-width:1000px;margin:0 auto;padding:0 16px 24px}
 
   <section id="signin" class="card hidden">
     <h2>Sign in</h2>
-    <p class="mut small">Enter your work email. We'll email you a sign-in link — no password.</p>
+    <p class="mut small">Sign in with your email and password.</p>
     <form id="signinForm" class="row">
-      <input id="email" type="email" required autocomplete="email" placeholder="you@company.com" style="flex:1;min-width:220px">
-      <button type="submit">Email me a link</button>
+      <input id="email" type="email" required autocomplete="username" placeholder="you@company.com" style="flex:1;min-width:220px">
+      <input id="password" type="password" required autocomplete="current-password" placeholder="Password" style="flex:1;min-width:160px">
+      <button type="submit" id="signinBtn">Sign in</button>
     </form>
   </section>
 

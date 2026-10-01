@@ -51,8 +51,11 @@
   $("signinForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const email = $("email").value.trim().toLowerCase();
-    const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
-    flash(error ? "Could not send the link: " + error.message : "Check your email for the sign-in link.");
+    $("signinBtn").disabled = true;
+    const { error } = await sb.auth.signInWithPassword({ email, password: $("password").value });
+    $("signinBtn").disabled = false;
+    $("password").value = "";
+    flash(error ? (/invalid/i.test(error.message) ? "Email or password is incorrect." : "Could not sign in: " + error.message) : "");
   });
   $("signout").addEventListener("click", async () => { await sb.auth.signOut(); flash(""); });
 
