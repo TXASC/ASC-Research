@@ -86,3 +86,19 @@ test("a record that loses validation drops out unless the user chose it", () => 
   assert.equal(m.items.find((x) => x.target_id === "d2").selected, false);
   assert.ok(A.valid(m));
 });
+
+test("purchased is a user mark; only a verified PDF makes a record acquired", () => {
+  assert.equal(A.STATUS_LABEL.purchased, "Marked purchased by user");
+  let m = A.fromSummary("r1", summary(), null, "T0");
+  assert.equal(A.mark(m, "d1", "uploaded"), m);                      // cannot be clicked
+  m = A.mark(m, "d1", "purchased");
+  assert.equal(m.items.find((x) => x.target_id === "d1").status, "purchased");
+  const s = summary();
+  s.instruments[0].documents = [{ filename: "a.pdf", state: "verified" }];
+  const up = A.fromSummary("r1", s, m, "T1");
+  assert.equal(up.items.find((x) => x.target_id === "d1").status, "uploaded");
+  assert.equal(A.mark(up, "d1", "not_opened"), up);                  // a click never overrides a verified upload
+  s.instruments[0].documents = [{ filename: "a.pdf", state: "rejected" }];   // verification withdrawn
+  const back = A.fromSummary("r1", s, up, "T2");
+  assert.equal(back.items.find((x) => x.target_id === "d1").status, "purchased");
+});

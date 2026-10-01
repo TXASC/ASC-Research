@@ -6,7 +6,11 @@
   "use strict";
   const EXACT = "exact_document_number";
   const STATUSES = ["not_opened", "searched", "purchased", "uploaded"];
-  const STATUS_LABEL = { not_opened: "Not opened", searched: "Searched", purchased: "Purchased", uploaded: "Uploaded" };
+  // 'searched' and 'purchased' are only what the user clicked; ASC cannot see the county checkout. 'uploaded' is never
+  // clicked: it is derived from a PDF the tower matched and verified against the record.
+  const USER_STATUSES = ["not_opened", "searched", "purchased"];
+  const STATUS_LABEL = { not_opened: "Not opened", searched: "Marked searched", purchased: "Marked purchased by user",
+    uploaded: "Acquired — verified PDF uploaded" };
   const ROLE_ORDER = { "Subject": 0, "Direct adjoiner": 1, "Block lot": 2 };
 
   function itemFrom(i, county) {
@@ -29,7 +33,8 @@
       const fresh = itemFrom(i, county);
       const old = prev.get(i.target_id);
       if (!old) return fresh;
-      const keep = { selected: old.selected, chosen: old.chosen, status: STATUSES.includes(old.status) ? old.status : "not_opened" };
+      const keep = { selected: old.selected, chosen: old.chosen,
+        status: USER_STATUSES.includes(old.status) ? old.status : old.status === "uploaded" ? "purchased" : "not_opened" };
       if (!fresh.clerk_search_value && keep.selected && !keep.chosen) keep.selected = false;   // was exact, no longer validated
       return Object.assign(fresh, keep);
     });
@@ -57,7 +62,9 @@
   }
 
   function mark(m, id, status) {
-    return STATUSES.includes(status) ? _set(m, id, { status: status }) : m;
+    const it = m.items.find((x) => x.target_id === id);
+    if (!it || it.status === "uploaded" || !USER_STATUSES.includes(status)) return m;   // 'uploaded' only from a verified PDF
+    return _set(m, id, { status: status });
   }
 
   // A record whose upload was accepted on the tower is 'uploaded' regardless of what was clicked.
@@ -112,7 +119,7 @@
       handed_off_at: row.handed_off_at, items: row.items || [] } : null;
   }
 
-  const api = { EXACT, STATUSES, STATUS_LABEL, fromSummary, setSelected, mark, withUploads, ordered, next, handoff,
+  const api = { EXACT, STATUSES, USER_STATUSES, STATUS_LABEL, fromSummary, setSelected, mark, withUploads, ordered, next, handoff,
     valid, forDb, fromDb };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ASCAcquire = api;

@@ -293,7 +293,8 @@
       if (!readOnly && it.status === "not_opened") commit(A.mark(m, it.target_id, "searched"));
     }
     const statusSel = (it) => {
-      const sel = el("select", { disabled: readOnly || null }, A.STATUSES.map((st) =>
+      if (it.status === "uploaded") return el("span", { class: "badge b-done" }, A.STATUS_LABEL.uploaded);
+      const sel = el("select", { disabled: readOnly || null }, A.USER_STATUSES.map((st) =>
         el("option", { value: st, selected: it.status === st || null }, A.STATUS_LABEL[st])));
       sel.addEventListener("change", () => commit(A.mark(m, it.target_id, sel.value)));
       return sel;
