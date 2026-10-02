@@ -241,8 +241,10 @@
       s.advisories.forEach((a) => d.append(el("div", { class: "note adv" }, a)));
     }
     if (s.block?.length) {
-      const c = s.block_counts || {};
-      d.append(el("h2", { style: "margin-top:14px" }, `Block research — ${c.direct_adjoiner || 0} direct adjoiner(s), ${c.block_lot || 0} block lot(s)`));
+      const nAdj = s.block.filter((b) => /adjoiner/i.test(b.role || "")).length;
+      const nLot = s.block.filter((b) => /block lot/i.test(b.role || "")).length;
+      d.append(el("h2", { style: "margin-top:14px" }, `Subject and adjoining parcels — ${nAdj} direct adjoiner(s)` +
+        (nLot ? `, ${nLot} block lot(s)` : "")));
       if (s.block_note) d.append(el("div", { class: "note adv" }, s.block_note));
       d.append(el("div", { class: "scroll" }, el("table", {},
         el("tr", {}, el("th", {}, "#"), el("th", {}, "Role"), el("th", {}, "Parcel"), el("th", {}, "Address"), el("th", {}, "Legal")),
@@ -255,10 +257,13 @@
         el("ul", { class: "small" }, s.boundaries.map((b) => el("li", {}, b.type_label + (b.label ? " — " + b.label : "") +
           (b.shared ? ` (${b.shared.toFixed(1)} ft)` : "") + (b.advisory ? " · advisory" : "")))));
     }
-    if (s.acquisition && s.instruments?.length && ["done", "waiting"].includes(r.status)) drawAcquisition(d, r, s, readOnly);
+    if (s.features?.legacy_cart && s.acquisition && s.instruments?.length && ["done", "waiting"].includes(r.status))
+      drawAcquisition(d, r, s, readOnly);                      // retired cart: only behind the legacy flag
+    if (s.checklist?.items?.length) drawDocumentsNeeded(d, r, s, readOnly, uploads);
     if (s.instruments?.length) {
-      d.append(el("h2", { style: "margin-top:14px" }, "Deeds and plats"));
-      d.append(el("div", { class: "scroll" }, el("table", {},
+      const all = el("details", { style: "margin-top:12px" }, el("summary", { class: "small" }, "All deed and plat search details"));
+      d.append(all);
+      all.append(el("div", { class: "scroll" }, el("table", {},
         el("tr", {}, el("th", {}, "Type"), el("th", {}, "For"), el("th", {}, "Reference"), el("th", {}, "Status"), el("th", {}, "Search")),
         s.instruments.map((i) => {
           const url = safeUrl(i.search_url), fb = safeUrl(i.fallback_url);
@@ -390,7 +395,7 @@
   }
 
   function drawUploads(d, r, s, uploads) {
-    d.append(el("h2", { style: "margin-top:18px" }, "Upload deeds and plats for drafting"));
+    d.append(el("h2", { style: "margin-top:18px" }, "Upload several files at once"));
     d.append(el("p", { class: "small mut" }, "Download each record from the official search, then drop the PDFs here. " +
       "We match each file to its record from what's printed in the document — never from the file name — and flag anything that doesn't match."));
     const queue = el("div", {});
@@ -445,7 +450,8 @@
       d.append(el("div", { class: "scroll", style: "margin-top:10px" }, tbl));
     }
 
-    // Drafting: only on an explicit request, after documents are uploaded
+    // Drafting is frozen (feature flag off by default): no drafting controls in the research workflow.
+    if (!s.features?.drafting) return;
     const dr = r.drafting || {};
     d.append(el("h2", { style: "margin-top:18px" }, "Drafting"));
     const ready = uploads.some((u) => u.status === "accepted" && u.doc_type === "deed");
@@ -460,10 +466,112 @@
       el("ul", {}, dr.warnings.map((w) => el("li", {}, w)))));
   }
 
+  // Upload one file to this search, optionally attached to one checklist item (the tower still verifies it
+  // from the document's content, never from the file name).
+  async function uploadOne(r, f, docType, targetId) {
+    if (f.size > 60 * 1024 * 1024) { flash(f.name + " is larger than 60 MB."); return false; }
+    const safe = f.name.replace(/[^A-Za-z0-9._ -]+/g, "_").slice(-120);
+    const path = `${user.id}/${r.id}/${crypto.randomUUID()}-${safe}`;
+    const up = await sb.storage.from("uploads").upload(path, f, { contentType: f.type || "application/pdf" });
+    if (up.error) { flash("Upload failed for " + f.name + ": " + up.error.message); return false; }
+    const ins = await sb.from("uploads").insert({ request_id: r.id, storage_path: path, filename: f.name.slice(0, 200),
+      doc_type: docType, chosen_target: targetId || null });
+    if (ins.error) { flash("Could not record " + f.name + ": " + ins.error.message); return false; }
+    return true;
+  }
+
+  // ---- Documents Needed: one row per document the research needs (tower checklist is the source of truth) ----
+  const WRITES = !!(cfg.checklistWrites);   // turned on after the Supabase decision types are approved
+  function drawDocumentsNeeded(d, r, s, readOnly, uploads) {
+    const D = window.ASCDocs, cl = s.checklist, prog = D.progress(cl.items);
+    const box = el("div", { class: "card", style: "margin-top:14px" });
+    d.append(box);
+    const kinds = cl.reference_kinds || {};
+    let seen = false;
+    try { seen = !!localStorage.getItem("asc-docs-help-seen"); } catch (e) { /* ignore */ }
+    box.append(
+      el("h2", {}, "Documents Needed", el("span", { class: "small mut" }, `  ${prog.resolved} of ${prog.total} resolved`)),
+      el("div", { class: "flash", style: "margin:8px 0" }, el("strong", {}, "What do I do next? "), cl.next?.text || ""),
+      el("details", { open: seen ? null : true },
+        el("summary", { class: "small" }, "How this works (read once)"),
+        el("ol", { class: "small" }, (cl.tips || []).map((t) => el("li", {}, t))),
+        el("p", { class: "small" }, el("strong", {}, "What the reference labels mean")),
+        el("ul", { class: "small" }, ["verified", "candidate", "owner_legal", "plat"].filter((k) => kinds[k]).map((k) =>
+          el("li", {}, el("strong", {}, kinds[k].label + ": "), kinds[k].explain))),
+        (cl.notices || []).length ? el("p", { class: "small mut" }, cl.notices.join(" ")) : null,
+        el("p", { class: "small mut" }, "Statuses you set (searching, found, purchased…) are your own notes. Only the research computer can mark a document Verified — after it reads the uploaded file.")));
+    try { localStorage.setItem("asc-docs-help-seen", "1"); } catch (e) { /* ignore */ }
+    if (!WRITES && !readOnly) box.append(el("p", { class: "small mut" },
+      "Status changes from this page are switched on after the next database update. Uploading works now."));
+    importOffer(box, r, cl, readOnly);
+    cl.items.forEach((it) => box.append(itemCard(r, it, readOnly, uploads)));
+  }
+
+  function itemCard(r, it, readOnly, uploads) {
+    const D = window.ASCDocs;
+    const url = safeUrl(it.search_url), fb = safeUrl(it.fallback_url);
+    const copyBtn = (label, v) => v ? el("button", { class: "ghost", onclick: async () => {
+      try { await navigator.clipboard.writeText(v); flash("Copied: " + v); } catch (e) { flash("Copy this: " + v); } } }, label) : null;
+    const tone = it.status === "verified" ? "b-done" : it.status === "rejected" ? "b-failed" : it.status === "uploaded" ? "b-waiting" : "";
+    const card = el("div", { style: "border-top:1px solid var(--line);padding:12px 0" },
+      el("div", { class: "row", style: "justify-content:space-between" },
+        el("div", {}, el("strong", {}, `${it.label} — ${it.class === "deed" ? "Deed" : "Plat"}`),
+          el("div", { class: "small mut" }, [it.owner, it.legal_short, (it.parcels || []).join(", ")].filter(Boolean).join(" · "))),
+        el("span", { class: "badge " + tone }, D.LABEL[it.status] || it.status)),
+      el("div", { class: "small", style: "margin-top:6px" }, el("strong", {}, it.reference_label + ": "), it.reference || "—"),
+      el("div", { class: "row", style: "margin-top:6px" },
+        url ? el("a", { class: "btn", href: url, target: "_blank", rel: "noopener" }, "Open county search ↗") : null,
+        fb && it.reference_kind === "candidate" ? el("a", { class: "btn", href: fb, target: "_blank", rel: "noopener",
+          style: "background:transparent;color:var(--fg);border-color:var(--brass)" }, "Owner search ↗") : null,
+        copyBtn("Copy number", it.copy?.number), copyBtn("Copy owner", it.copy?.owner), copyBtn("Copy legal", it.copy?.legal)),
+      el("div", { class: "small", style: "margin-top:6px" }, el("strong", {}, "Next: "), it.next_action),
+      it.verification ? el("div", { class: "small mut" }, "Check result: " + it.verification) : null,
+      (it.documents || []).length ? el("div", { class: "small mut" }, (it.documents || []).map((x) => `📄 ${x.filename} (${x.state})`).join(" · ")) : null);
+    if (!readOnly) {
+      const controls = el("div", { class: "row", style: "margin-top:6px" });
+      const sel = el("select", { disabled: (WRITES && !D.TOWER.includes(it.status)) ? null : true },
+        D.OPERATOR.map((st) => el("option", { value: st, selected: it.operator_status === st ? "selected" : null }, D.LABEL[st])));
+      const note = el("input", { placeholder: "Note (optional)", value: it.note || "", maxlength: "1000",
+        style: "flex:1;min-width:160px", disabled: WRITES ? null : true });
+      const save = el("button", { class: "ghost", disabled: WRITES ? null : true, onclick: async () => {
+        save.disabled = true;
+        try { await decide(r, "checklist_update", D.statusRequest(it, sel.value, note.value, crypto.randomUUID())); }
+        catch (e) { flash(e.message); }
+      } }, "Save");
+      const file = el("input", { type: "file", accept: ".pdf,.png,.jpg,.jpeg,.tif,.tiff", class: "hidden" });
+      file.addEventListener("change", async () => {
+        if (!file.files[0]) return;
+        if (await uploadOne(r, file.files[0], it.class, it.target_id)) { flash("Uploaded — checking it against this item now."); refresh(); }
+      });
+      controls.append(sel, note, save, file, el("button", { onclick: () => file.click() }, "Upload for this item"));
+      card.append(controls);
+    }
+    if ((it.history || []).length) card.append(el("details", { class: "small" }, el("summary", {}, `History (${it.history.length})`),
+      el("ul", {}, it.history.map((h) => el("li", {}, `${(h.at || "").slice(0, 16)} · ${h.actor}: ${D.LABEL[h.from] || h.from || "—"} → ${D.LABEL[h.to] || h.to || "—"}` +
+        (h.source === "import" ? " (imported old-cart mark)" : "") + (h.result !== "applied" ? ` [${h.result}]` : "") + (h.note ? ` — ${h.note}` : ""))))));
+    return card;
+  }
+
+  // Old browser-cart marks: preview first, then a deliberate confirm. The browser storage is left untouched.
+  function importOffer(box, r, cl, readOnly) {
+    if (readOnly) return;
+    let stored = null;
+    try { stored = JSON.parse(localStorage.getItem(`asc-research-acq:${user.id}:${r.id}`) || "null"); } catch (e) { return; }
+    const rows = window.ASCDocs.cartPreview(stored, cl.items);
+    if (!rows.length || cl.items.some((i) => (i.history || []).some((h) => h.source === "import"))) return;
+    const btn = el("button", { class: "ghost", disabled: WRITES ? null : true, onclick: () =>
+      decide(r, "checklist_update", window.ASCDocs.importRequest(rows, crypto.randomUUID())) }, "Add these to the history");
+    box.append(el("details", { class: "small", style: "margin:8px 0" },
+      el("summary", {}, `This browser has ${rows.length} mark(s) from the old research cart — preview`),
+      el("p", { class: "mut" }, "These are past notes you made. They are added to each item's history as your claims; they never mark a document found or verified."),
+      el("ul", {}, rows.map((x) => el("li", {}, `${x.label}: ${x.claim}`))), btn));
+  }
+
   async function decide(r, kind, payload) {
     const { error } = await sb.from("decisions").insert({ request_id: r.id, kind, payload });
     const done = { cancel: "Cancel sent.", reassign_upload: "Re-checking the file against that record…",
-                   start_drafting: "Drafting requested — the research computer will read the deeds." };
+                   start_drafting: "Drafting requested — the research computer will read the deeds.",
+                   checklist_update: "Saved — the research computer records it in a few seconds." };
     flash(error ? "Could not send: " + error.message : done[kind] || "Sent — the research continues.");
     refresh();
   }
