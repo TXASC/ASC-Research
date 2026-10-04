@@ -8,7 +8,7 @@
   const LABEL = {
     not_started: "Not started", searching: "Searching", found: "Found in the county records",
     purchased_downloaded: "Purchased / downloaded (your mark)", unavailable_online: "Not available online",
-    needs_help: "Needs help", uploaded: "Uploaded — being checked", verified: "Verified", rejected: "Rejected — wrong document",
+    needs_help: "Needs help", uploaded: "Uploaded — waiting for office check", verified: "Verified", rejected: "Rejected — wrong document",
   };
 
   // A status request the tower will accept. Tower-only states are never sent; every request carries the version
