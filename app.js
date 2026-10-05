@@ -104,12 +104,30 @@
     try { await refresh(); } catch (e) { /* keep polling */ }
     const cur = requests.find((r) => r.id === views.current.id);
     const busy = cur && ["queued", "running"].includes(cur.status);
-    if (user) pollTimer = setTimeout(poll, busy ? 2000 : 6000);
+    if (user) pollTimer = setTimeout(poll, busy ? 3000 : 15000);
+  }
+
+  // The list is fetched without `summary` (the large map/instrument data): pulling every request's summary every few
+  // seconds ran the Supabase free-plan egress past its limit (2026-10-05). Summaries load only for the searches on
+  // screen, and only again when that row's updated_at changes.
+  const LIST_COLUMNS = "id,user_id,email,query,county,reference,status,plain_status,tower_job_id,package_path," +
+    "report_path,package_built,error,created_at,updated_at,drafting";
+  const summaryCache = {};              // request id -> { updated_at, summary }
+  async function attachSummaries(ids) {
+    const want = [...new Set(ids.filter(Boolean))].filter((id) => {
+      const r = requests.find((x) => x.id === id);
+      return r && (!summaryCache[id] || summaryCache[id].updated_at !== r.updated_at);
+    });
+    if (want.length) {
+      const { data } = await sb.from("requests").select("id,updated_at,summary").in("id", want);
+      for (const row of data || []) summaryCache[row.id] = { updated_at: row.updated_at, summary: row.summary };
+    }
+    for (const r of requests) if (summaryCache[r.id]) r.summary = summaryCache[r.id].summary;
   }
 
   async function refresh() {
     const [{ data: reqs, error }, { data: beat }] = await Promise.all([
-      sb.from("requests").select("*").order("created_at", { ascending: false }).limit(100),
+      sb.from("requests").select(LIST_COLUMNS).order("created_at", { ascending: false }).limit(100),
       sb.from("door_status").select("*").eq("id", 1).maybeSingle(),
     ]);
     if (error) { flash("Could not load your searches: " + error.message); return; }
@@ -117,6 +135,7 @@
     ui = S.resolve(ui, requests); persist();
     views.current.id = ui.currentRequestId;
     views.history.id = ui.historyDetailId;
+    await attachSummaries([views.current.id, views.history.id]);
     for (const v of Object.values(views)) {
       if (v.id) {
         const { data: ups } = await sb.from("uploads").select("*").eq("request_id", v.id).order("created_at");
