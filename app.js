@@ -247,10 +247,11 @@
         (nLot ? `, ${nLot} block lot(s)` : "")));
       if (s.block_note) d.append(el("div", { class: "note adv" }, s.block_note));
       d.append(el("div", { class: "scroll" }, el("table", {},
-        el("tr", {}, el("th", {}, "#"), el("th", {}, "Role"), el("th", {}, "Parcel"), el("th", {}, "Address"), el("th", {}, "Legal")),
-        s.block.map((b, n) => el("tr", {}, el("td", {}, n + 1), el("td", {}, b.role),
-          el("td", {}, b.parcel_id + (b.accounts > 1 ? ` (${b.accounts} accounts)` : "")),
-          el("td", { class: "small" }, b.address || ""), el("td", { class: "small" }, b.legal || ""))))));
+        ...(() => {                                          // F-4: Role · Owner · Deed info · Address · Legal
+          const t = ASCDocs.parcelTable(s.block);
+          return [el("tr", {}, t.header.map((h) => el("th", {}, h))),
+            ...t.rows.map((row) => el("tr", {}, row.map((c, i) => el("td", i >= 2 ? { class: "small" } : {}, c))))];
+        })())));
     }
     if (s.boundaries?.length) {
       d.append(el("h2", { style: "margin-top:14px" }, "Boundaries of the subject"),
