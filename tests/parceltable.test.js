@@ -39,3 +39,15 @@ test("DAL-4: the 'What to pick' line shows only when the tower sends one", () =>
     "What to pick: Grantee EDE PROPERTIES LLC · around 10/2024 · Warranty Deed or Special Warranty Deed");
   assert.equal(D.pickNote({ class: "plat" }), null);
 });
+
+test("F-3: one question about the best candidate, others listed without reasons", () => {
+  const s = { confirm: { parcel_uuid: "u1", question: "Is this the subject? 12 CASTELLON DR — MRW INVESTORS LLC — LOT 6R" },
+    candidates: [{ parcel_uuid: "u1", parcel_id: "43009312", situs: "12 CASTELLON DR", owner: "MRW INVESTORS LLC", legal: "LOT 6R" },
+      { parcel_uuid: "u2", parcel_id: "43009304", situs: "14 CASTELLON DR", owner: "KA HOME", legal: "LOT 5R", reasons: ["x"] }] };
+  const v = D.confirmView(s);
+  assert.equal(v.question, s.confirm.question);
+  assert.deepEqual(v.yes, { parcel_uuid: "u1", reason: "Yes — confirmed on the research page" });
+  assert.deepEqual(v.others.map((o) => o.label), ["14 CASTELLON DR — KA HOME — LOT 5R"]);
+  assert.ok(!JSON.stringify(v).includes("\"x\""));
+  assert.equal(D.confirmView({ candidates: [] }), null);
+});

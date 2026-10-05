@@ -241,17 +241,19 @@
         el("p", {}, `${s.county || ""} parcel ${s.subject.parcel_id || ""} — ${s.subject.situs || ""}`),
         el("p", { class: "small mut" }, `${s.subject.legal || ""}${s.subject.owner ? " · CAD owner: " + s.subject.owner : ""}`));
     }
-    if (!readOnly && r.status === "waiting" && s.candidates?.length) {
-      const form = el("form", {});
-      form.append(el("p", {}, s.decision || "Choose the subject parcel."));
-      s.candidates.forEach((c, i) => form.append(el("label", { style: "display:block;padding:6px 0;border-top:1px solid var(--line)" },
-        el("input", { type: "radio", name: "pick", value: c.parcel_uuid, required: true, checked: i === 0 ? "checked" : null }), " ",
-        el("strong", {}, c.parcel_id), " ", c.situs || "", el("div", { class: "small mut" }, (c.legal || "") + " — " + (c.reasons || []).join("; ")))));
-      const reason = el("input", { placeholder: "Why this parcel? (required)", required: true, minlength: "3", style: "flex:1;min-width:220px" });
-      form.append(el("div", { class: "row", style: "margin-top:8px" }, reason, el("button", { type: "submit" }, "Use this parcel")));
-      form.addEventListener("submit", (e) => { e.preventDefault();
-        decide(r, "confirm_subject", { parcel_uuid: form.pick.value, reason: reason.value.trim() }); });
-      d.append(form);
+    const cv = !readOnly && r.status === "waiting" ? ASCDocs.confirmView(s) : null;
+    if (cv) {                                              // F-3: one question, no machine reasons
+      const box = el("div", { class: "note" }, el("p", { style: "margin:0 0 8px" }, cv.question));
+      const others = el("div", { class: "hidden", style: "margin-top:8px" });
+      cv.others.forEach((o) => others.append(el("div", { class: "row", style: "padding:4px 0;border-top:1px solid var(--line)" },
+        el("span", { style: "flex:1" }, el("strong", {}, o.parcel_id || ""), " ", o.label),
+        el("button", { class: "ghost", onclick: () => decide(r, "confirm_subject", { parcel_uuid: o.parcel_uuid, reason: cv.otherReason }) },
+          "Use this parcel"))));
+      if (!cv.others.length) others.append(el("p", { class: "small mut" }, "No other nearby parcel — call the office."));
+      box.append(el("div", { class: "row" },
+        el("button", { onclick: () => decide(r, "confirm_subject", cv.yes) }, "Yes"),
+        el("button", { class: "ghost", onclick: () => others.classList.toggle("hidden") }, "Pick a different parcel")), others);
+      d.append(box);
     }
     // Blocking items only when the user can act; advisories are flagged, never blocking.
     (s.blocking || []).forEach((b) => d.append(el("div", { class: "note block" }, "Action needed: " + b)));

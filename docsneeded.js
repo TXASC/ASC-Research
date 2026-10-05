@@ -64,7 +64,20 @@
     return item && item.what_to_pick ? "What to pick: " + item.what_to_pick : null;
   }
 
-  const api = { OPERATOR, TOWER, LABEL, statusRequest, cartPreview, importRequest, resolved, progress, parcelTable, attachLabel, pickNote };
+  // F-3: a questionable subject is one question. Machine reasons never reach the page (the tower log keeps them).
+  function confirmView(s) {
+    if (!s || !s.confirm) return null;
+    const label = (c) => [c.situs, c.owner, c.legal].map((x) => x || "—").join(" — ");
+    return {
+      question: s.confirm.question,
+      yes: { parcel_uuid: s.confirm.parcel_uuid, reason: "Yes — confirmed on the research page" },
+      others: (s.candidates || []).filter((c) => c.parcel_uuid !== s.confirm.parcel_uuid)
+        .map((c) => ({ parcel_uuid: c.parcel_uuid, parcel_id: c.parcel_id, label: label(c) })),
+      otherReason: "Picked a different parcel on the research page",
+    };
+  }
+
+  const api = { OPERATOR, TOWER, LABEL, statusRequest, cartPreview, importRequest, resolved, progress, parcelTable, attachLabel, pickNote, confirmView };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ASCDocs = api;
 })(typeof window !== "undefined" ? window : globalThis);
