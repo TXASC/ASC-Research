@@ -77,7 +77,15 @@
     };
   }
 
-  const api = { OPERATOR, TOWER, LABEL, statusRequest, cartPreview, importRequest, resolved, progress, parcelTable, attachLabel, pickNote, confirmView };
+  // F-1: heading for the subject/adjoiner table; 'Same block' (and old 'Block lot') rows are the rest of the block.
+  function blockHeading(block) {
+    const rows = block || [];
+    const nAdj = rows.filter((b) => /adjoiner/i.test(b.role || "")).length;
+    const nLot = rows.filter((b) => /same block|block lot/i.test(b.role || "")).length;
+    return `Subject and adjoining parcels — ${nAdj} direct adjoiner(s)` + (nLot ? `, ${nLot} more lot(s) in the block` : "");
+  }
+
+  const api = { OPERATOR, TOWER, LABEL, statusRequest, cartPreview, importRequest, resolved, progress, parcelTable, attachLabel, pickNote, confirmView, blockHeading };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ASCDocs = api;
 })(typeof window !== "undefined" ? window : globalThis);

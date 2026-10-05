@@ -262,10 +262,7 @@
       s.advisories.forEach((a) => d.append(el("div", { class: "note adv" }, a)));
     }
     if (s.block?.length) {
-      const nAdj = s.block.filter((b) => /adjoiner/i.test(b.role || "")).length;
-      const nLot = s.block.filter((b) => /block lot/i.test(b.role || "")).length;
-      d.append(el("h2", { style: "margin-top:14px" }, `Subject and adjoining parcels — ${nAdj} direct adjoiner(s)` +
-        (nLot ? `, ${nLot} block lot(s)` : "")));
+      d.append(el("h2", { style: "margin-top:14px" }, ASCDocs.blockHeading(s.block)));
       if (s.block_note) d.append(el("div", { class: "note adv" }, s.block_note));
       d.append(el("div", { class: "scroll" }, el("table", {},
         ...(() => {                                          // F-4: Role · Owner · Deed info · Address · Legal

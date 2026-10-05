@@ -51,3 +51,11 @@ test("F-3: one question about the best candidate, others listed without reasons"
   assert.ok(!JSON.stringify(v).includes("\"x\""));
   assert.equal(D.confirmView({ candidates: [] }), null);
 });
+
+test("F-1: the heading counts direct adjoiners and the rest of the block", () => {
+  assert.equal(D.blockHeading([{ role: "Subject" }, { role: "Direct adjoiner" }, { role: "Direct adjoiner" },
+    { role: "Same block" }, { role: "HOA common area — see plat" }]),
+    "Subject and adjoining parcels — 2 direct adjoiner(s), 1 more lot(s) in the block");
+  assert.equal(D.blockHeading([{ role: "Subject" }, { role: "Direct adjoiner" }]),
+    "Subject and adjoining parcels — 1 direct adjoiner(s)");
+});
