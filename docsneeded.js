@@ -45,7 +45,16 @@
     return { total: n, resolved: done, open: n - done };
   }
 
-  const api = { OPERATOR, TOWER, LABEL, statusRequest, cartPreview, importRequest, resolved, progress };
+  // F-4 (Castellon 2026-10-05): the subject/adjoiner table is Role · Owner · Deed info · Address · Legal (full legal).
+  // Deed info is the tower's number + recorded date, else 'Search grantee'. Shared feet and account counts stay off.
+  function parcelTable(block) {
+    const header = ["#", "Role", "Owner", "Deed info", "Address", "Legal"];
+    const rows = (block || []).map((b, n) => [String(n + 1), b.role || "", b.owner || "",
+      b.deed_info || "Search grantee", b.address || "", b.legal || ""]);
+    return { header, rows };
+  }
+
+  const api = { OPERATOR, TOWER, LABEL, statusRequest, cartPreview, importRequest, resolved, progress, parcelTable };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ASCDocs = api;
 })(typeof window !== "undefined" ? window : globalThis);
