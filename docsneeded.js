@@ -59,7 +59,12 @@
     return (item && item.class === "plat") ? "Attach plat PDF" : "Attach deed PDF";
   }
 
-  const api = { OPERATOR, TOWER, LABEL, statusRequest, cartPreview, importRequest, resolved, progress, parcelTable, attachLabel };
+  // DAL-4: which clerk row is the deed (grantee, roughly when, which document types).
+  function pickNote(item) {
+    return item && item.what_to_pick ? "What to pick: " + item.what_to_pick : null;
+  }
+
+  const api = { OPERATOR, TOWER, LABEL, statusRequest, cartPreview, importRequest, resolved, progress, parcelTable, attachLabel, pickNote };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ASCDocs = api;
 })(typeof window !== "undefined" ? window : globalThis);

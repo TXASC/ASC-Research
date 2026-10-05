@@ -33,3 +33,9 @@ test("F-5: the per-row button reads 'Attach deed PDF' (plat rows: 'Attach plat P
   assert.equal(D.attachLabel({ class: "plat" }), "Attach plat PDF");
   assert.equal(D.attachLabel({}), "Attach deed PDF");
 });
+
+test("DAL-4: the 'What to pick' line shows only when the tower sends one", () => {
+  assert.equal(D.pickNote({ what_to_pick: "Grantee EDE PROPERTIES LLC · around 10/2024 · Warranty Deed or Special Warranty Deed" }),
+    "What to pick: Grantee EDE PROPERTIES LLC · around 10/2024 · Warranty Deed or Special Warranty Deed");
+  assert.equal(D.pickNote({ class: "plat" }), null);
+});

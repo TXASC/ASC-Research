@@ -539,6 +539,7 @@
           el("div", { class: "small mut" }, [it.owner, it.legal_short, (it.parcels || []).join(", ")].filter(Boolean).join(" · "))),
         el("span", { class: "badge " + tone }, D.LABEL[it.status] || it.status)),
       el("div", { class: "small", style: "margin-top:6px" }, el("strong", {}, it.reference_label + ": "), it.reference || "—"),
+      D.pickNote(it) ? el("div", { class: "small", style: "margin-top:4px" }, D.pickNote(it)) : null,
       el("div", { class: "row", style: "margin-top:6px" },
         url ? el("a", { class: "btn", href: url, target: "_blank", rel: "noopener" }, "Open county search ↗") : null,
         fb && it.reference_kind === "candidate" ? el("a", { class: "btn", href: fb, target: "_blank", rel: "noopener",
