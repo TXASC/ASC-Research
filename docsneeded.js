@@ -54,7 +54,12 @@
     return { header, rows };
   }
 
-  const api = { OPERATOR, TOWER, LABEL, statusRequest, cartPreview, importRequest, resolved, progress, parcelTable };
+  // F-5: the per-row upload button. Plat rows say plat so staff never attach a deed there by mistake.
+  function attachLabel(item) {
+    return (item && item.class === "plat") ? "Attach plat PDF" : "Attach deed PDF";
+  }
+
+  const api = { OPERATOR, TOWER, LABEL, statusRequest, cartPreview, importRequest, resolved, progress, parcelTable, attachLabel };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ASCDocs = api;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -27,3 +27,9 @@ test("an older summary without deed_info still reads 'Search grantee'", () => {
   assert.equal(D.parcelTable([{ role: "Subject" }]).rows[0][3], "Search grantee");
   assert.deepEqual(D.parcelTable([{ role: "Subject" }]).rows[0].slice(2), ["", "Search grantee", "", ""]);
 });
+
+test("F-5: the per-row button reads 'Attach deed PDF' (plat rows: 'Attach plat PDF')", () => {
+  assert.equal(D.attachLabel({ class: "deed" }), "Attach deed PDF");
+  assert.equal(D.attachLabel({ class: "plat" }), "Attach plat PDF");
+  assert.equal(D.attachLabel({}), "Attach deed PDF");
+});

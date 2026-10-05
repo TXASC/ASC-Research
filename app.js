@@ -563,7 +563,7 @@
         if (!file.files[0]) return;
         if (await uploadOne(r, file.files[0], it.class, it.target_id)) { flash("Uploaded — checking it against this item now."); refresh(); }
       });
-      controls.append(sel, note, save, file, el("button", { onclick: () => file.click() }, "Upload for this item"));
+      controls.append(sel, note, save, file, el("button", { onclick: () => file.click() }, ASCDocs.attachLabel(it)));
       card.append(controls);
     }
     if ((it.history || []).length) card.append(el("details", { class: "small" }, el("summary", {}, `History (${it.history.length})`),
