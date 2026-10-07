@@ -3,6 +3,7 @@
 (function () {
   "use strict";
   const cfg = window.ASC_RESEARCH || {};
+  const settings = window.ASCSettings.fromConfig(cfg);   // schema + bucket names (old project by default)
   const S = window.ASCState;
   const $ = (id) => document.getElementById(id);
   const show = (id, on) => $(id).classList.toggle("hidden", !on);
@@ -31,7 +32,7 @@
 
   async function init() {
     if (!cfg.supabaseUrl || !cfg.supabaseKey || !window.supabase) { show("setup", true); return; }
-    sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey);
+    sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey, settings.clientOptions);
     sb.auth.onAuthStateChange((_e, session) => { const was = user && user.id; user = session?.user || null;
       if (user && user.id !== was) ui = S.load(user.id, window.localStorage); render(); });
     const { data } = await sb.auth.getSession();
@@ -179,7 +180,7 @@
   }
 
   async function signed(path, filename) {
-    const { data, error } = await sb.storage.from("packages").createSignedUrl(path, 3600, { download: filename });
+    const { data, error } = await sb.storage.from(settings.packagesBucket).createSignedUrl(path, 3600, { download: filename });
     if (error) { flash("Download link failed: " + error.message); return; }
     window.open(data.signedUrl, "_blank", "noopener");
   }
@@ -443,7 +444,7 @@
         if (f.size > 60 * 1024 * 1024) { flash(f.name + " is larger than 60 MB."); continue; }
         const safe = f.name.replace(/[^A-Za-z0-9._ -]+/g, "_").slice(-120);
         const path = `${user.id}/${r.id}/${crypto.randomUUID()}-${safe}`;
-        const up = await sb.storage.from("uploads").upload(path, f, { contentType: f.type || "application/pdf" });
+        const up = await sb.storage.from(settings.uploadsBucket).upload(path, f, { contentType: f.type || "application/pdf" });
         if (up.error) { flash("Upload failed for " + f.name + ": " + up.error.message); continue; }
         const ins = await sb.from("uploads").insert({ request_id: r.id, storage_path: path, filename: f.name.slice(0, 200),
           doc_type: row._type.value, chosen_target: row._target.value || null });
@@ -491,7 +492,7 @@
     if (f.size > 60 * 1024 * 1024) { flash(f.name + " is larger than 60 MB."); return false; }
     const safe = f.name.replace(/[^A-Za-z0-9._ -]+/g, "_").slice(-120);
     const path = `${user.id}/${r.id}/${crypto.randomUUID()}-${safe}`;
-    const up = await sb.storage.from("uploads").upload(path, f, { contentType: f.type || "application/pdf" });
+    const up = await sb.storage.from(settings.uploadsBucket).upload(path, f, { contentType: f.type || "application/pdf" });
     if (up.error) { flash("Upload failed for " + f.name + ": " + up.error.message); return false; }
     const ins = await sb.from("uploads").insert({ request_id: r.id, storage_path: path, filename: f.name.slice(0, 200),
       doc_type: docType, chosen_target: targetId || null });
