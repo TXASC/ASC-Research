@@ -22,10 +22,23 @@ test("a missing config object does not throw", () => {
   assert.equal(fromConfig(null).clientOptions, undefined);
 });
 
-const { passwordProblem } = require("../settings.js");
+const { passwordProblem, retryPayload } = require("../settings.js");
 
 test("the set-password step catches an empty field and a mismatch before sending", () => {
   assert.equal(passwordProblem("", ""), "Type a new password.");
   assert.equal(passwordProblem("abc12345", "abc1234"), "The two passwords do not match.");
   assert.equal(passwordProblem("abc12345", "abc12345"), "");
+});
+
+test("Try again resends the same search without retyping", () => {
+  assert.deepEqual(retryPayload({ query: " 3801 W Spring Creek Pkwy, Plano ", county: "Collin", reference: "J-1", status: "failed" }),
+    { query: "3801 W Spring Creek Pkwy, Plano", county: "Collin", reference: "J-1" });
+  assert.deepEqual(retryPayload({ query: "3022 Rockhill Rd, Aubrey, TX", county: "", reference: undefined }),
+    { query: "3022 Rockhill Rd, Aubrey, TX", county: null, reference: null });
+});
+
+test("a request that cannot be resent offers no retry", () => {
+  assert.equal(retryPayload({ query: "  ab " }), null);
+  assert.equal(retryPayload(null), null);
+  assert.equal(retryPayload({}), null);
 });

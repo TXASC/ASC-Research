@@ -100,21 +100,25 @@
     const query = $("q").value.trim();
     if (query.length < 3) return;
     $("go").disabled = true;
-    const { data, error } = await sb.from("requests")
-      .insert({ query, county: $("county").value || null, reference: $("ref").value.trim() || null })
-      .select().single();
+    const ok = await submitRequest({ query, county: $("county").value || null, reference: $("ref").value.trim() || null });
     $("go").disabled = false;
+    if (ok) clearForm();
+  });
+
+  // One path for a new request, whether typed into the form or resent with "Try again".
+  async function submitRequest(payload) {
+    const { data, error } = await sb.from("requests").insert(payload).select().single();
     if (error) {
       flash(/row-level security|permission/i.test(error.message)
         ? "Your email is not approved for ASC Research yet — ask Adams Surveying to add it."
         : "Could not submit: " + error.message);
-      return;
+      return false;
     }
-    clearForm();
     ui = S.submitted(ui, data.id); persist();
     flash("Submitted — the research computer will pick it up shortly.");
     await poll();
-  });
+    return true;
+  }
 
   // Poll quickly while the current search is running so the map visibly builds; slowly otherwise.
   async function poll() {
@@ -232,6 +236,11 @@
     (s.notices || []).forEach((n) => d.append(el("div", { class: "note adv" }, n)));
 
     const actions = el("div", { class: "row", style: "margin:8px 0 12px" });
+    const again = r.status === "failed" ? ASCSettings.retryPayload(r) : null;
+    if (again) actions.append(el("button", { onclick: async (ev) => {
+      ev.target.disabled = true;                                   // one click, one new request
+      if (!(await submitRequest(again))) ev.target.disabled = false;
+    } }, "Try again"));
     if (r.package_path) actions.append(el("button", { onclick: () => signed(r.package_path, "research_package.zip") }, "Download package (.zip)"));
     if (r.report_path) actions.append(el("button", { class: "ghost", onclick: () => signed(r.report_path, "RESEARCH_REPORT.html") }, "Download report"));
     if (!readOnly && ["queued", "running", "waiting"].includes(r.status))

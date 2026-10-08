@@ -20,7 +20,14 @@
     return "";
   }
 
-  const api = { fromConfig, passwordProblem };
+  // What "Try again" sends: exactly what was submitted the first time (nothing to retype). null if it cannot be resent.
+function retryPayload(r) {
+  const query = String((r && r.query) || "").trim();
+  if (query.length < 3) return null;
+  return { query, county: (r && r.county) || null, reference: (r && r.reference) || null };
+}
+
+const api = { fromConfig, passwordProblem, retryPayload };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ASCSettings = api;
 })(typeof window !== "undefined" ? window : globalThis);
