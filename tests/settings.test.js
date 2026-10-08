@@ -21,3 +21,11 @@ test("a missing config object does not throw", () => {
   assert.equal(fromConfig(undefined).packagesBucket, "packages");
   assert.equal(fromConfig(null).clientOptions, undefined);
 });
+
+const { passwordProblem } = require("../settings.js");
+
+test("the set-password step catches an empty field and a mismatch before sending", () => {
+  assert.equal(passwordProblem("", ""), "Type a new password.");
+  assert.equal(passwordProblem("abc12345", "abc1234"), "The two passwords do not match.");
+  assert.equal(passwordProblem("abc12345", "abc12345"), "");
+});

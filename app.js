@@ -34,6 +34,7 @@
     if (!cfg.supabaseUrl || !cfg.supabaseKey || !window.supabase) { show("setup", true); return; }
     sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey, settings.clientOptions);
     sb.auth.onAuthStateChange((_e, session) => { const was = user && user.id; user = session?.user || null;
+      if (_e === "PASSWORD_RECOVERY") recovering = true;       // arrived from a reset link: ask for a new password first
       if (user && user.id !== was) ui = S.load(user.id, window.localStorage); render(); });
     const { data } = await sb.auth.getSession();
     user = data.session?.user || null;
@@ -41,8 +42,9 @@
     render();
   }
 
+  let recovering = false;
   function render() {
-    show("signin", !user); show("app", !!user); show("signout", !!user);
+    show("signin", !user); show("setpw", !!user && recovering); show("app", !!user && !recovering); show("signout", !!user);
     $("who").textContent = user ? user.email : "";
     clearTimeout(pollTimer);
     if (user) { drawTabs(); poll(); }
@@ -57,6 +59,21 @@
     $("signinBtn").disabled = false;
     $("password").value = "";
     flash(error ? (/invalid/i.test(error.message) ? "Email or password is incorrect." : "Could not sign in: " + error.message) : "");
+  });
+  $("setpwForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const a = $("newPassword").value, b = $("newPassword2").value;
+    const problem = window.ASCSettings.passwordProblem(a, b);
+    if (problem) { flash(problem); return; }
+    $("setpwBtn").disabled = true;
+    const { error } = await sb.auth.updateUser({ password: a });
+    $("setpwBtn").disabled = false;
+    if (error) { flash("Could not save the password: " + error.message); return; }
+    $("newPassword").value = ""; $("newPassword2").value = "";
+    recovering = false;
+    if (window.history && window.history.replaceState) window.history.replaceState(null, "", window.location.pathname);
+    flash("Password saved. Use it the next time you sign in.");
+    render();
   });
   $("signout").addEventListener("click", async () => { await sb.auth.signOut(); flash(""); });
 

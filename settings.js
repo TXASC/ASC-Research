@@ -12,7 +12,15 @@
       uploadsBucket: cfg.uploadsBucket || "uploads",
     };
   }
-  const api = { fromConfig };
+  // Checks the two "new password" fields before anything is sent. The server still enforces its own rules
+  // (minimum length, leaked-password check); this only catches typos early. Returns "" when fine.
+  function passwordProblem(a, b) {
+    if (!a) return "Type a new password.";
+    if (a !== b) return "The two passwords do not match.";
+    return "";
+  }
+
+  const api = { fromConfig, passwordProblem };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ASCSettings = api;
 })(typeof window !== "undefined" ? window : globalThis);

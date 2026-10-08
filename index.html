@@ -98,6 +98,16 @@ footer.fine{max-width:1000px;margin:0 auto;padding:0 16px 24px}
     </form>
   </section>
 
+  <section id="setpw" class="card hidden">
+    <h2>Set your password</h2>
+    <p class="muted">You arrived from a password-reset link. Choose the password you will use to sign in.</p>
+    <form id="setpwForm" class="row">
+      <input id="newPassword" type="password" required autocomplete="new-password" placeholder="New password" style="flex:1;min-width:160px">
+      <input id="newPassword2" type="password" required autocomplete="new-password" placeholder="Type it again" style="flex:1;min-width:160px">
+      <button type="submit" id="setpwBtn">Save password</button>
+    </form>
+  </section>
+
   <section id="app" class="hidden">
     <nav class="tabs" role="tablist">
       <button id="tabCurrentBtn" role="tab" class="tab sel" aria-selected="true">Current search</button>
@@ -144,9 +154,9 @@ footer.fine{max-width:1000px;margin:0 auto;padding:0 16px 24px}
 <script src="uistate.js?v=202610021101"></script>
 <script src="acquire.js?v=202610021101"></script>
 <script src="docsneeded.js?v=202610051900"></script>
-<script src="settings.js?v=202610071000"></script>
+<script src="settings.js?v=202610081500"></script>
 <script src="config.js?v=202610031900"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="app.js?v=202610071000"></script>
+<script src="app.js?v=202610081500"></script>
 </body>
 </html>
