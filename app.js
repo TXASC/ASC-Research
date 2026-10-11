@@ -5,6 +5,7 @@
   const cfg = window.ASC_RESEARCH || {};
   const settings = window.ASCSettings.fromConfig(cfg);   // schema + bucket names (old project by default)
   const S = window.ASCState;
+  const F = window.ASCFetch;
   const $ = (id) => document.getElementById(id);
   const show = (id, on) => $(id).classList.toggle("hidden", !on);
   let sb = null, user = null, requests = [], pollTimer = null, ui = S.initial();
@@ -120,14 +121,21 @@
     return true;
   }
 
-  // Poll quickly while the current search is running so the map visibly builds; slowly otherwise.
+  // Poll every 3 s while the search on screen is running (the map visibly builds) or a file is being checked, every
+  // 60 s otherwise, and not at all while the tab is hidden (fetchplan.js nextPoll).
   async function poll() {
     clearTimeout(pollTimer);
-    try { await refresh(); } catch (e) { /* keep polling */ }
-    const cur = requests.find((r) => r.id === views.current.id);
-    const busy = cur && ["queued", "running"].includes(cur.status);
-    if (user) pollTimer = setTimeout(poll, busy ? 3000 : 15000);
+    if (!user || document.hidden) return;
+    try { await refresh(true); } catch (e) { /* keep polling */ }
+    const shown = Object.values(views).filter((v) => v.id);
+    const delay = F.nextPoll(document.hidden, shown.map((v) => requests.find((r) => r.id === v.id)),
+      shown.flatMap((v) => v.uploads));
+    if (user && delay !== null) pollTimer = setTimeout(poll, delay);
   }
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) clearTimeout(pollTimer);   // hidden: no calls at all
+    else if (user) poll();                           // shown again: one refresh now, then the normal cadence
+  });
 
   // The list is fetched without `summary` (the large map/instrument data): pulling every request's summary every few
   // seconds ran the Supabase free-plan egress past its limit (2026-10-05). Summaries load only for the searches on
@@ -147,24 +155,40 @@
     for (const r of requests) if (summaryCache[r.id]) r.summary = summaryCache[r.id].summary;
   }
 
-  async function refresh() {
-    const [{ data: reqs, error }, { data: beat }] = await Promise.all([
-      sb.from("requests").select(LIST_COLUMNS).order("created_at", { ascending: false }).limit(100),
-      sb.from("door_status").select("*").eq("id", 1).maybeSingle(),
+  // Reads only what can have changed (see fetchplan.js). Called by the poll timer (fromPoll) or after a user action,
+  // which does a full list read and re-reads the open search's uploads freely for a couple of minutes.
+  let fc = F.initial(), fcUser = null;
+  async function refresh(fromPoll) {
+    if (fcUser !== (user && user.id)) { fc = F.initial(); fcUser = user && user.id; }
+    let now = Date.now();
+    if (!fromPoll) fc = F.touched(fc, now);
+    const read = F.listRead(fc, now, !fromPoll);
+    let q = sb.from("requests").select(LIST_COLUMNS);
+    q = read.full ? q.order("created_at", { ascending: false }).limit(100)
+      : q.gt("updated_at", read.after).order("updated_at", { ascending: true }).limit(100);
+    const wantDoor = F.doorDue(fc, now);
+    const [{ data: reqs, error }, doorRes] = await Promise.all([
+      q, wantDoor ? sb.from("door_status").select("*").eq("id", 1).maybeSingle() : Promise.resolve(null),
     ]);
     if (error) { flash("Could not load your searches: " + error.message); return; }
-    requests = reqs || [];
+    now = Date.now();
+    const merged = F.mergeList(fc, read, reqs, now);
+    fc = merged.cache;
+    if (doorRes && !doorRes.error) fc = { ...fc, door: doorRes.data, doorAt: now };
+    requests = merged.list.map((r) => ({ ...r }));       // copies: attachSummaries adds `summary` to what is shown
     ui = S.resolve(ui, requests); persist();
     views.current.id = ui.currentRequestId;
     views.history.id = ui.historyDetailId;
     await attachSummaries([views.current.id, views.history.id]);
     for (const v of Object.values(views)) {
-      if (v.id) {
-        const { data: ups } = await sb.from("uploads").select("*").eq("request_id", v.id).order("created_at");
-        v.uploads = ups || [];
-      } else v.uploads = [];
+      const r = v.id && requests.find((x) => x.id === v.id);
+      if (r && F.uploadsDue(fc, r, now)) {
+        const { data: ups, error: upErr } = await sb.from("uploads").select("*").eq("request_id", v.id).order("created_at");
+        if (!upErr) fc = F.storeUploads(fc, r, ups, now);
+      }
+      v.uploads = r ? ((fc.uploads[r.id] || {}).rows || []) : [];
     }
-    towerBadge(beat);
+    towerBadge(fc.door);
     drawTabs();
     drawList();
     drawDetail(requests.find((r) => r.id === views.current.id), views.current, false);
