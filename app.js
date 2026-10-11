@@ -117,6 +117,7 @@
     }
     ui = S.submitted(ui, data.id); persist();
     flash("Submitted — the research computer will pick it up shortly.");
+    actedSincePoll = true;               // the new row carries the database clock: the next read must be a full one
     await poll();
     return true;
   }
@@ -157,12 +158,14 @@
 
   // Reads only what can have changed (see fetchplan.js). Called by the poll timer (fromPoll) or after a user action,
   // which does a full list read and re-reads the open search's uploads freely for a couple of minutes.
-  let fc = F.initial(), fcUser = null;
+  let fc = F.initial(), fcUser = null, actedSincePoll = false;
   async function refresh(fromPoll) {
     if (fcUser !== (user && user.id)) { fc = F.initial(); fcUser = user && user.id; }
     let now = Date.now();
-    if (!fromPoll) fc = F.touched(fc, now);
-    const read = F.listRead(fc, now, !fromPoll);
+    const acted = !fromPoll || actedSincePoll;
+    actedSincePoll = false;
+    if (acted) fc = F.touched(fc, now);
+    const read = F.listRead(fc, now, acted);
     let q = sb.from("requests").select(LIST_COLUMNS);
     q = read.full ? q.order("created_at", { ascending: false }).limit(100)
       : q.gt("updated_at", read.after).order("updated_at", { ascending: true }).limit(100);
