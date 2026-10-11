@@ -170,9 +170,15 @@
     q = read.full ? q.order("created_at", { ascending: false }).limit(100)
       : q.gt("updated_at", read.after).order("updated_at", { ascending: true }).limit(100);
     const wantDoor = F.doorDue(fc, now);
-    const [{ data: reqs, error }, doorRes] = await Promise.all([
+    const [{ data: reqs, error, status }, doorRes] = await Promise.all([
       q, wantDoor ? sb.from("door_status").select("*").eq("id", 1).maybeSingle() : Promise.resolve(null),
     ]);
+    if (F.sessionLost(error, status)) {            // signed out underneath us: stop polling, show the sign-in form
+      clearTimeout(pollTimer);
+      await sb.auth.signOut({ scope: "local" });
+      flash("Your sign-in has ended. Please sign in again.");
+      return;
+    }
     if (error) { flash("Could not load your searches: " + error.message); return; }
     now = Date.now();
     const merged = F.mergeList(fc, read, reqs, now);

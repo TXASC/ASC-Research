@@ -92,3 +92,12 @@ test("poll cadence: 60 s idle, 3 s only while something on screen is moving, non
   assert.equal(F.nextPoll(false, [done], [{ status: "accepted" }]), 60000);
   assert.equal(F.nextPoll(true, [running], [{ status: "processing" }]), null);  // hidden tab: paused
 });
+
+test("a read refused for lack of a session stops the page; other errors do not", () => {
+  assert.ok(F.sessionLost({ code: "42501", message: "permission denied for schema research" }, 401));
+  assert.ok(F.sessionLost({ code: "PGRST301", message: "JWT expired" }, 401));
+  assert.ok(F.sessionLost({ code: "42501" }, 0));
+  assert.ok(!F.sessionLost({ code: "57014", message: "statement timeout" }, 500));
+  assert.ok(!F.sessionLost({ message: "Failed to fetch" }, 0));
+  assert.ok(!F.sessionLost(null, 200));
+});

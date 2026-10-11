@@ -82,11 +82,20 @@
     return busy ? ACTIVE_POLL_MS : IDLE_POLL_MS;
   }
 
+  // A read refused because the browser no longer has a signed-in session. On 2026-10-11 a tab's token refresh failed
+  // during the ASC-ERP outage; supabase-js fell back to the publishable key, and the tab kept polling as `anon`, which
+  // has no access to the research schema ("permission denied for schema research", 42501). The page must say so and
+  // stop, not poll on as nobody.
+  function sessionLost(error, status) {
+    if (!error) return false;
+    return status === 401 || status === 403 || ["42501", "PGRST301", "PGRST302", "PGRST303"].includes(error.code);
+  }
+
   function storeUploads(c, req, rows, now) {
     return { ...c, uploads: { ...c.uploads, [req.id]: { at: now, updated_at: req.updated_at, rows: rows || [] } } };
   }
 
-  const api = { initial, listRead, mergeList, micros, doorDue, touched, uploadsDue, storeUploads, nextPoll,
+  const api = { initial, listRead, mergeList, micros, doorDue, touched, uploadsDue, storeUploads, nextPoll, sessionLost,
     FULL_EVERY_MS, DOOR_EVERY_MS, UPLOADS_EVERY_MS, HOT_AFTER_ACTION_MS, IDLE_POLL_MS, ACTIVE_POLL_MS };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ASCFetch = api;
