@@ -91,11 +91,20 @@
     return status === 401 || status === 403 || ["42501", "PGRST301", "PGRST302", "PGRST303"].includes(error.code);
   }
 
+  // The research computer writes its heartbeat every 2 minutes (option B, 2026-10-11: half the writes of once a
+  // minute). Worst case seen here: 120 s + one ~6 s bridge pass + this page's 60 s door read + a 60 s poll ~ 250 s, so
+  // 'offline' only after 5 minutes without a beat.
+  const OFFLINE_AFTER_MS = 5 * 60 * 1000;
+  function towerOnline(beat, now) {
+    const seen = beat && beat.last_seen ? Date.parse(beat.last_seen) : NaN;
+    return !Number.isNaN(seen) && now - seen < OFFLINE_AFTER_MS;
+  }
+
   function storeUploads(c, req, rows, now) {
     return { ...c, uploads: { ...c.uploads, [req.id]: { at: now, updated_at: req.updated_at, rows: rows || [] } } };
   }
 
-  const api = { initial, listRead, mergeList, micros, doorDue, touched, uploadsDue, storeUploads, nextPoll, sessionLost,
+  const api = { initial, listRead, mergeList, micros, doorDue, touched, uploadsDue, storeUploads, nextPoll, sessionLost, towerOnline,
     FULL_EVERY_MS, DOOR_EVERY_MS, UPLOADS_EVERY_MS, HOT_AFTER_ACTION_MS, IDLE_POLL_MS, ACTIVE_POLL_MS };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ASCFetch = api;

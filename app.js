@@ -207,8 +207,7 @@
 
   function towerBadge(beat) {
     const b = $("tower"); show("tower", true);
-    const age = beat?.last_seen ? (Date.now() - new Date(beat.last_seen).getTime()) / 1000 : Infinity;
-    const online = age < 180;
+    const online = F.towerOnline(beat, Date.now());
     b.className = "badge " + (online ? "b-online" : "b-offline");
     b.textContent = online ? "Research computer online" : "Research computer offline — requests will wait";
     const sel = $("county");

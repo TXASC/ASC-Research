@@ -101,3 +101,10 @@ test("a read refused for lack of a session stops the page; other errors do not",
   assert.ok(!F.sessionLost({ message: "Failed to fetch" }, 0));
   assert.ok(!F.sessionLost(null, 200));
 });
+
+test("the research computer reads offline only after 5 minutes without a heartbeat", () => {
+  const beat = { last_seen: "2026-10-11T18:00:00+00:00" };
+  assert.ok(F.towerOnline(beat, Date.parse("2026-10-11T18:04:10Z")));     // 250 s: the worst case with a 2 min beat
+  assert.ok(!F.towerOnline(beat, Date.parse("2026-10-11T18:05:00Z")));
+  assert.ok(!F.towerOnline(null, T0) && !F.towerOnline({}, T0));
+});
