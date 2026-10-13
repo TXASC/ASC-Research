@@ -332,8 +332,7 @@
     }
     if (s.boundaries?.length) {
       d.append(el("h2", { style: "margin-top:14px" }, "Boundaries of the subject"),
-        el("ul", { class: "small" }, s.boundaries.map((b) => el("li", {}, b.type_label + (b.label ? " — " + b.label : "") +
-          (b.shared ? ` (${b.shared.toFixed(1)} ft)` : "") + (b.advisory ? " · advisory" : "")))));
+        el("ul", { class: "small" }, s.boundaries.map((b) => el("li", {}, ASCDocs.boundaryLine(b)))));
     }
     if (s.features?.legacy_cart && s.acquisition && s.instruments?.length && ["done", "waiting"].includes(r.status))
       drawAcquisition(d, r, s, readOnly);                      // retired cart: only behind the legacy flag

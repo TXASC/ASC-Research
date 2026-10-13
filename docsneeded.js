@@ -98,7 +98,14 @@
     return !!u && u.status !== "processing" && u.status !== "uploaded" && !!(u.association || {}).document_id;
   }
 
-  const api = { OPERATOR, TOWER, LABEL, statusRequest, cartPreview, importRequest, resolved, progress, parcelTable, attachLabel, pickNote, confirmView, blockHeading, attachedText, canChangeTarget };
+  // SWP-4: one boundary line. The tower's "Frontage: …" text wins; older summaries keep the type/label form.
+  function boundaryLine(b) {
+    const ft = b.shared ? ` (${b.shared.toFixed(1)} ft)` : "";
+    if (b.frontage) return b.frontage + ft;
+    return b.type_label + (b.label ? " — " + b.label : "") + ft + (b.advisory ? " · advisory" : "");
+  }
+
+  const api = { OPERATOR, TOWER, LABEL, statusRequest, cartPreview, importRequest, resolved, progress, parcelTable, attachLabel, pickNote, confirmView, blockHeading, attachedText, canChangeTarget, boundaryLine };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ASCDocs = api;
 })(typeof window !== "undefined" ? window : globalThis);
