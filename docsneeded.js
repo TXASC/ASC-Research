@@ -85,7 +85,20 @@
     return `Subject and adjoining parcels — ${nAdj} direct adjoiner(s)` + (nLot ? `, ${nLot} more lot(s) in the block` : "");
   }
 
-  const api = { OPERATOR, TOWER, LABEL, statusRequest, cartPreview, importRequest, resolved, progress, parcelTable, attachLabel, pickNote, confirmView, blockHeading };
+  // SWP-2: where an uploaded file is filed. The tower's label wins; the page never asks the user to choose a record.
+  function attachedText(u, instruments) {
+    const a = (u && u.association) || {};
+    if (a.attached_label) return a.attached_label;
+    const t = (instruments || []).find((i) => i.target_id === a.target_id);
+    if (t) return `Attached to: ${t.class} ${t.reference || ""}`.trim();
+    return "Waiting for the office to file it";
+  }
+
+  function canChangeTarget(u) {
+    return !!u && u.status !== "processing" && u.status !== "uploaded" && !!(u.association || {}).document_id;
+  }
+
+  const api = { OPERATOR, TOWER, LABEL, statusRequest, cartPreview, importRequest, resolved, progress, parcelTable, attachLabel, pickNote, confirmView, blockHeading, attachedText, canChangeTarget };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ASCDocs = api;
 })(typeof window !== "undefined" ? window : globalThis);

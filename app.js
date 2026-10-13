@@ -517,12 +517,13 @@
     if (uploads.length) {
       const tbl = el("table", {}, el("tr", {}, el("th", {}, "File"), el("th", {}, "Type"), el("th", {}, "Record"), el("th", {}, "Status")));
       uploads.forEach((u) => {
-        const t = (s.instruments || []).find((i) => i.target_id === (u.association || {}).target_id);
-        const sel = el("select", {}, targetOptions(s, u.doc_type, (u.association || {}).target_id));
+        const sel = el("select", { class: "hidden" }, targetOptions(s, u.doc_type, (u.association || {}).target_id));
         sel.addEventListener("change", () => sel.value && decide(r, "reassign_upload", { upload_id: u.id, target_id: sel.value }));
+        const change = el("a", { href: "#", class: "small", style: "margin-left:6px",
+          onclick: (e) => { e.preventDefault(); sel.classList.remove("hidden"); change.remove(); } }, "change");
         tbl.append(el("tr", {}, el("td", {}, u.filename), el("td", {}, u.doc_type),
-          el("td", { class: "small" }, t ? `${t.class} ${t.reference || ""}${u.association.suggested ? " (matched from the document)" : ""}` : "—",
-            u.status !== "processing" && u.status !== "uploaded" ? el("div", {}, "Change: ", sel) : null),
+          el("td", { class: "small" }, ASCDocs.attachedText(u, s.instruments),
+            ASCDocs.canChangeTarget(u) ? el("span", {}, change, sel) : null),
           el("td", {}, el("span", { class: "badge b-" + u.status }, u.status_label || u.status))));
       });
       d.append(el("div", { class: "scroll", style: "margin-top:10px" }, tbl));
