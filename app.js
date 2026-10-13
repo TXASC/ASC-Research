@@ -299,6 +299,7 @@
       d.append(el("h2", {}, "Subject"),
         el("p", {}, `${s.county || ""} parcel ${s.subject.parcel_id || ""} — ${s.subject.situs || ""}`),
         el("p", { class: "small mut" }, `${s.subject.legal || ""}${s.subject.owner ? " · CAD owner: " + s.subject.owner : ""}`));
+      if (s.subject.survey) d.append(el("p", { class: "small" }, s.subject.survey));    // SWP-5: abstract land
     }
     const cv = !readOnly && r.status === "waiting" ? ASCDocs.confirmView(s) : null;
     if (cv) {                                              // F-3: one question, no machine reasons
