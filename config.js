@@ -8,4 +8,5 @@ window.ASC_RESEARCH = {
   packagesBucket: "research-packages",
   uploadsBucket: "research-uploads",
   checklistWrites: true,   // Documents Needed controls ON: Supabase door v3.1 applied and verified 2026-10-03
+  pageDecisions: false,     // SWP-7 question buttons + whole-block switch: ON after the staged door SQL (asc-supabase 102935a) is applied
 };

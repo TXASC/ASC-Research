@@ -357,7 +357,7 @@
     // Blocking items only when the user can act; advisories are flagged, never blocking.
     (s.blocking || []).forEach((b) => d.append(el("div", { class: "note block" }, "Action needed: " + b)));
     // SWP-7: an open item the user can settle is one plain question with buttons; everything else stays with the office.
-    if (!readOnly && s.questions?.length) {
+    if (!readOnly && cfg.pageDecisions && s.questions?.length) {
       d.append(el("h2", { style: "margin-top:10px" }, "Quick question"));
       s.questions.forEach((q) => {
         const box = el("div", { class: "note" }, el("div", {}, q.text));
@@ -374,7 +374,7 @@
     if (s.block?.length) {
       d.append(el("h2", { style: "margin-top:14px" }, ASCDocs.blockHeading(s.block)));
       if (s.block_note) d.append(el("div", { class: "note adv" }, s.block_note));
-      if (!readOnly && (s.block_counts?.same_block || 0) > 0) {       // SWP-3/7: whole-block deed tasks, per search
+      if (!readOnly && cfg.pageDecisions && (s.block_counts?.same_block || 0) > 0) {       // SWP-3/7: whole-block deed tasks, per search
         const on = !!s.block_deed_tasks;
         d.append(el("div", { class: "row small", style: "margin:6px 0" },
           el("span", { class: "mut" }, on ? "Deed tasks are listed for the whole block." :
