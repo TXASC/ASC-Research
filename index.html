@@ -118,7 +118,13 @@ footer.fine{max-width:1000px;margin:0 auto;padding:0 16px 24px}
     <div id="tabCurrent" role="tabpanel">
       <div class="card">
         <form id="searchForm">
-          <label for="q" style="display:block;font-size:18px;font-weight:600;margin-bottom:8px">Property address</label>
+          <div class="row" role="radiogroup" aria-label="How to find the property" style="margin-bottom:8px;gap:6px">
+            <button type="button" class="mode" data-mode="address" aria-pressed="true">Address</button>
+            <button type="button" class="mode ghost" data-mode="pin" aria-pressed="false">Map pin</button>
+            <button type="button" class="mode ghost" data-mode="parcel" aria-pressed="false">Parcel ID</button>
+          </div>
+          <label for="q" id="qLabel" style="display:block;font-size:18px;font-weight:600;margin-bottom:8px">Property address</label>
+          <div id="pinMap" class="hidden" style="height:300px;border-radius:8px;margin-bottom:8px"></div>
           <div class="row" style="flex-wrap:nowrap">
             <input id="q" autocomplete="off" required minlength="3" placeholder="2409 Stonegate Cir, Denton TX">
             <button type="submit" id="go">Research</button>
@@ -151,13 +157,13 @@ footer.fine{max-width:1000px;margin:0 auto;padding:0 16px 24px}
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="blockmap.js?v=202610021101"></script>
-<script src="uistate.js?v=202610021101"></script>
+<script src="uistate.js?v=202610122200"></script>
 <script src="fetchplan.js?v=202610111700"></script>
 <script src="acquire.js?v=202610021101"></script>
 <script src="docsneeded.js?v=202610122000"></script>
 <script src="settings.js?v=202610081700"></script>
 <script src="config.js?v=202610081530"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="app.js?v=202610122100"></script>
+<script src="app.js?v=202610122200"></script>
 </body>
 </html>

@@ -58,7 +58,23 @@
     return (requests || []).filter((r) => r.id !== s.currentRequestId);
   }
 
-  const api = { initial, load, save, newSearch, submitted, openHistory, makeCurrent, setTab, resolve, history, KEY };
+  // SWP-6: the request for each input mode (Address · Map pin · Parcel ID). The tower parses every form.
+  function buildQuery(mode, v) {
+    v = v || {};
+    const county = v.county || null;
+    if (mode === "pin") {
+      if (typeof v.lat !== "number" || typeof v.lng !== "number") return { error: "Click the map to drop a pin on the property." };
+      return { query: `pin: ${v.lat.toFixed(6)}, ${v.lng.toFixed(6)}`, county };
+    }
+    const text = String(v.text || "").trim();
+    if (mode === "parcel") {
+      if (!county) return { error: "Choose the county for a parcel ID." };
+      return { query: "parcel " + text, county };
+    }
+    return { query: text, county };
+  }
+
+  const api = { initial, load, save, newSearch, submitted, openHistory, makeCurrent, setTab, resolve, history, KEY, buildQuery };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ASCState = api;
 })(typeof window !== "undefined" ? window : globalThis);

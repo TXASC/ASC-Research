@@ -96,14 +96,53 @@
   }
   $("newSearchBtn").addEventListener("click", newSearch);
 
+  // SWP-6: Address · Map pin · Parcel ID. The tower parses every form; the page only builds the request.
+  let mode = "address", pinMap = null, pinMarker = null, pin = null;
+  const MODE_TEXT = {
+    address: ["Property address", "2409 Stonegate Cir, Denton TX — or a plus code like 832Q+3VX Celina"],
+    pin: ["Drop a pin on the property", "Click the map; the pin's coordinates are sent"],
+    parcel: ["Parcel / account ID", "e.g. 64337 — choose the county under More options"],
+  };
+  function setMode(m) {
+    mode = m;
+    document.querySelectorAll("#searchForm .mode").forEach((b) => {
+      const on = b.dataset.mode === m;
+      b.setAttribute("aria-pressed", String(on)); b.classList.toggle("ghost", !on);
+    });
+    $("qLabel").textContent = MODE_TEXT[m][0];
+    $("q").placeholder = MODE_TEXT[m][1];
+    $("q").required = m !== "pin";
+    $("q").classList.toggle("hidden", m === "pin");
+    show("pinMap", m === "pin");
+    if (m === "parcel") $("searchForm").querySelector("details").open = true;
+    if (m === "pin") {
+      if (!pinMap) {
+        pinMap = L.map("pinMap").setView([33.2, -96.9], 9);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+          { maxZoom: 20, attribution: "&copy; OpenStreetMap contributors" }).addTo(pinMap);
+        pinMap.on("click", (ev) => {
+          pin = { lat: ev.latlng.lat, lng: ev.latlng.lng };
+          if (pinMarker) pinMarker.setLatLng(ev.latlng); else pinMarker = L.marker(ev.latlng).addTo(pinMap);
+        });
+      }
+      setTimeout(() => pinMap.invalidateSize(), 0);
+    }
+  }
+  document.querySelectorAll("#searchForm .mode").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+
   $("searchForm").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const query = $("q").value.trim();
-    if (query.length < 3) return;
+    const built = S.buildQuery(mode, { text: $("q").value, lat: pin?.lat, lng: pin?.lng, county: $("county").value || null });
+    if (built.error) { flash(built.error); return; }
+    if (mode !== "pin" && built.query.length < 3) return;
     $("go").disabled = true;
-    const ok = await submitRequest({ query, county: $("county").value || null, reference: $("ref").value.trim() || null });
+    const ok = await submitRequest({ query: built.query, county: built.county, reference: $("ref").value.trim() || null });
     $("go").disabled = false;
-    if (ok) clearForm();
+    if (ok) {
+      clearForm();
+      pin = null;
+      if (pinMarker) { pinMarker.remove(); pinMarker = null; }
+    }
   });
 
   // One path for a new request, whether typed into the form or resent with "Try again".
