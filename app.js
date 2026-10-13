@@ -356,13 +356,33 @@
     }
     // Blocking items only when the user can act; advisories are flagged, never blocking.
     (s.blocking || []).forEach((b) => d.append(el("div", { class: "note block" }, "Action needed: " + b)));
-    if (s.advisories?.length) {
-      d.append(el("h2", { style: "margin-top:10px" }, "Flagged for the surveyor (advisory)"));
-      s.advisories.forEach((a) => d.append(el("div", { class: "note adv" }, a)));
+    // SWP-7: an open item the user can settle is one plain question with buttons; everything else stays with the office.
+    if (!readOnly && s.questions?.length) {
+      d.append(el("h2", { style: "margin-top:10px" }, "Quick question"));
+      s.questions.forEach((q) => {
+        const box = el("div", { class: "note" }, el("div", {}, q.text));
+        const row = el("div", { class: "row", style: "margin-top:6px" });
+        ASCDocs.questionActions(q).forEach((a) => row.append(el("button", { class: a.decision ? "" : "ghost",
+          disabled: WRITES ? null : true, onclick: async (ev) => {
+            row.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+            if (a.decision) await decide(r, a.decision.kind, a.decision.payload);
+            else { flash("Left for the office to check."); box.remove(); }
+          } }, a.label)));
+        box.append(row); d.append(box);
+      });
     }
     if (s.block?.length) {
       d.append(el("h2", { style: "margin-top:14px" }, ASCDocs.blockHeading(s.block)));
       if (s.block_note) d.append(el("div", { class: "note adv" }, s.block_note));
+      if (!readOnly && (s.block_counts?.same_block || 0) > 0) {       // SWP-3/7: whole-block deed tasks, per search
+        const on = !!s.block_deed_tasks;
+        d.append(el("div", { class: "row small", style: "margin:6px 0" },
+          el("span", { class: "mut" }, on ? "Deed tasks are listed for the whole block." :
+            "Same-block rows are for reference — no deed tasks."),
+          el("button", { class: "ghost", disabled: WRITES ? null : true,
+            onclick: () => decide(r, "block_deed_tasks", { on: !on }) },
+            on ? "Stop adding whole-block deed tasks" : "Create deed tasks for the whole block")));
+      }
       d.append(el("div", { class: "scroll" }, el("table", {},
         ...(() => {                                          // F-4: Role · Owner · Deed info · Address · Legal
           const t = ASCDocs.parcelTable(s.block);
@@ -630,12 +650,12 @@
     const url = safeUrl(it.search_url), fb = safeUrl(it.fallback_url);
     const copyBtn = (label, v) => v ? el("button", { class: "ghost", onclick: async () => {
       try { await navigator.clipboard.writeText(v); flash("Copied: " + v); } catch (e) { flash("Copy this: " + v); } } }, label) : null;
-    const tone = it.status === "verified" ? "b-done" : it.status === "rejected" ? "b-failed" : it.status === "uploaded" ? "b-waiting" : "";
+    const badge = D.pageBadge(it);                      // SWP-7: Needed → Uploaded → Confirmed (+ Can't find it)
     const card = el("div", { style: "border-top:1px solid var(--line);padding:12px 0" },
       el("div", { class: "row", style: "justify-content:space-between" },
         el("div", {}, el("strong", {}, `${it.label} — ${it.class === "deed" ? "Deed" : "Plat"}`),
           el("div", { class: "small mut" }, [it.owner, it.legal_short, (it.parcels || []).join(", ")].filter(Boolean).join(" · "))),
-        el("span", { class: "badge " + tone }, D.LABEL[it.status] || it.status)),
+        el("span", { class: "badge " + badge.tone }, badge.label)),
       el("div", { class: "small", style: "margin-top:6px" }, el("strong", {}, it.reference_label + ": "), it.reference || "—"),
       D.pickNote(it) ? el("div", { class: "small", style: "margin-top:4px" }, D.pickNote(it)) : null,
       el("div", { class: "row", style: "margin-top:6px" },
@@ -644,25 +664,20 @@
           style: "background:transparent;color:var(--fg);border-color:var(--brass)" }, "Owner search ↗") : null,
         copyBtn("Copy number", it.copy?.number), copyBtn("Copy owner", it.copy?.owner), copyBtn("Copy legal", it.copy?.legal)),
       el("div", { class: "small", style: "margin-top:6px" }, el("strong", {}, "Next: "), it.next_action),
-      it.verification ? el("div", { class: "small mut" }, "Check result: " + it.verification) : null,
-      (it.documents || []).length ? el("div", { class: "small mut" }, (it.documents || []).map((x) => `📄 ${x.filename} (${x.state})`).join(" · ")) : null);
+      (it.documents || []).length ? el("div", { class: "small mut" }, (it.documents || []).map((x) => "📄 " + x.filename).join(" · ")) : null);
     if (!readOnly) {
-      const controls = el("div", { class: "row", style: "margin-top:6px" });
-      const sel = el("select", { disabled: (WRITES && !D.TOWER.includes(it.status)) ? null : true },
-        D.OPERATOR.map((st) => el("option", { value: st, selected: it.operator_status === st ? "selected" : null }, D.LABEL[st])));
-      const note = el("input", { placeholder: "Note (optional)", value: it.note || "", maxlength: "1000",
-        style: "flex:1;min-width:160px", disabled: WRITES ? null : true });
-      const save = el("button", { class: "ghost", disabled: WRITES ? null : true, onclick: async () => {
-        save.disabled = true;
-        try { await decide(r, "checklist_update", D.statusRequest(it, sel.value, note.value, crypto.randomUUID())); }
-        catch (e) { flash(e.message); }
-      } }, "Save");
+      const controls = el("div", { class: "row", style: "margin-top:6px;align-items:center" });
+      const cant = badge.status === "uploaded" || badge.status === "confirmed" || !WRITES ? null :
+        el("a", { href: "#", class: "small", onclick: async (e) => {
+          e.preventDefault();
+          try { await decide(r, "checklist_update", D.cantFind(it, crypto.randomUUID())); } catch (err) { flash(err.message); }
+        } }, badge.status === "cant_find" ? "Found it after all" : "Can't find it");
       const file = el("input", { type: "file", accept: ".pdf,.png,.jpg,.jpeg,.tif,.tiff", class: "hidden" });
       file.addEventListener("change", async () => {
         if (!file.files[0]) return;
         if (await uploadOne(r, file.files[0], it.class, it.target_id)) { flash("Uploaded — checking it against this item now."); refresh(); }
       });
-      controls.append(sel, note, save, file, el("button", { onclick: () => file.click() }, ASCDocs.attachLabel(it)));
+      controls.append(file, el("button", { onclick: () => file.click() }, ASCDocs.attachLabel(it)), cant || "");
       card.append(controls);
     }
     if ((it.history || []).length) card.append(el("details", { class: "small" }, el("summary", {}, `History (${it.history.length})`),
@@ -690,7 +705,9 @@
     const { error } = await sb.from("decisions").insert({ request_id: r.id, kind, payload });
     const done = { cancel: "Cancel sent.", reassign_upload: "Re-checking the file against that record…",
                    start_drafting: "Drafting requested — the research computer will read the deeds.",
-                   checklist_update: "Saved — the research computer records it in a few seconds." };
+                   checklist_update: "Saved — the research computer records it in a few seconds.",
+                   review_resolution: "Thanks — the research computer records your answer.",
+                   block_deed_tasks: "Sent — the deed list updates in a few seconds." };
     flash(error ? "Could not send: " + error.message : done[kind] || "Sent — the research continues.");
     refresh();
   }

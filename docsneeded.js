@@ -105,7 +105,28 @@
     return b.type_label + (b.label ? " — " + b.label : "") + ft + (b.advisory ? " · advisory" : "");
   }
 
-  const api = { OPERATOR, TOWER, LABEL, statusRequest, cartPreview, importRequest, resolved, progress, parcelTable, attachLabel, pickNote, confirmView, blockHeading, attachedText, canChangeTarget, boundaryLine };
+  // SWP-7: Needed → Uploaded → Confirmed (+ Can't find it). The detailed status and its reasons stay on the tower.
+  const PAGE = { needed: ["Needed", ""], uploaded: ["Uploaded", "b-waiting"], confirmed: ["Confirmed", "b-done"],
+                 cant_find: ["Can't find it", "b-failed"] };
+  const COLLAPSE = { uploaded: "uploaded", verified: "confirmed", unavailable_online: "cant_find" };
+  function pageBadge(it) {
+    const s = it.page_status || COLLAPSE[it.status] || "needed";
+    return { status: s, label: PAGE[s][0], tone: PAGE[s][1] };
+  }
+
+  // The small "Can't find it" link, and its undo.
+  function cantFind(it, clientId) {
+    const undo = pageBadge(it).status === "cant_find";
+    return statusRequest(it, undo ? "not_started" : "unavailable_online", null, clientId);
+  }
+
+  // One plain question → its buttons. A button with no action ("Not sure — office") sends nothing.
+  function questionActions(q) {
+    return (q.buttons || []).map((b) => ({ label: b.label, decision: b.action
+      ? { kind: "review_resolution", payload: { review_id: q.review_id, action: b.action, reason: b.reason } } : null }));
+  }
+
+  const api = { OPERATOR, TOWER, LABEL, statusRequest, cartPreview, importRequest, resolved, progress, parcelTable, attachLabel, pickNote, confirmView, blockHeading, attachedText, canChangeTarget, boundaryLine, pageBadge, cantFind, questionActions };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ASCDocs = api;
 })(typeof window !== "undefined" ? window : globalThis);
