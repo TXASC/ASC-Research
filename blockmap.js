@@ -96,7 +96,11 @@
       lyr._target = st;
       return lyr;
     }
-    if (p.kind === "boundary") return L.geoJSON(f, { style: LINE[p.type] || LINE.unknown_gap }).bindPopup(popup(p));
+    if (p.kind === "boundary") {            // DEMO-2: a major road (the affected area stops there) draws heavier
+      const base = LINE[p.type] || LINE.unknown_gap;
+      const style = p.tier === "major" ? Object.assign({}, base, { weight: 10, color: "#343a40" }) : base;
+      return L.geoJSON(f, { style: style }).bindPopup(popup(p));
+    }
     if (p.kind === "search_point") {
       const c = f.geometry.coordinates;
       return L.marker([c[1], c[0]], { icon: L.divIcon({ className: "", html: '<div class="bm-pin"><b></b><i></i></div>', iconSize: [18, 18], iconAnchor: [9, 9] }) })

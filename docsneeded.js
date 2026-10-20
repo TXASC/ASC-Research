@@ -105,6 +105,23 @@
     return b.type_label + (b.label ? " — " + b.label : "") + ft + (b.advisory ? " · advisory" : "");
   }
 
+  // DEMO-2: "Stops at: Copper Canyon Rd, FM 407 · Crosses: Brownwood Ave" — the roads that bound the affected area.
+  const ROUTE = new Set(["FM", "IH", "US", "SH", "RM", "RR", "CR", "PR", "NTTA", "TX"]);
+  function roadName(n) {
+    return String(n || "").split(/\s+/).filter(Boolean).map((w) => (/\d/.test(w) || ROUTE.has(w.toUpperCase())
+      ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())).join(" ");
+  }
+  function areaRoadsLine(roads) {
+    const rs = Array.isArray(roads) ? roads : [];
+    const names = (f) => rs.filter(f).map((r) => roadName(r.name)).sort();
+    const stops = names((r) => r.tier === "major");
+    const crosses = names((r) => r.tier === "local" && r.crossed);
+    const parts = [];
+    if (stops.length) parts.push("Stops at: " + stops.join(", "));
+    if (crosses.length) parts.push("Crosses: " + crosses.join(", "));
+    return parts.length ? parts.join(" · ") : null;
+  }
+
   // SWP-7: Needed → Uploaded → Confirmed (+ Can't find it). The detailed status and its reasons stay on the tower.
   const PAGE = { needed: ["Needed", ""], uploaded: ["Uploaded", "b-waiting"], confirmed: ["Confirmed", "b-done"],
                  cant_find: ["Can't find it", "b-failed"] };
@@ -126,7 +143,7 @@
       ? { kind: "review_resolution", payload: { review_id: q.review_id, action: b.action, reason: b.reason } } : null }));
   }
 
-  const api = { OPERATOR, TOWER, LABEL, statusRequest, cartPreview, importRequest, resolved, progress, parcelTable, attachLabel, pickNote, confirmView, blockHeading, attachedText, canChangeTarget, boundaryLine, pageBadge, cantFind, questionActions };
+  const api = { OPERATOR, TOWER, LABEL, statusRequest, cartPreview, importRequest, resolved, progress, parcelTable, attachLabel, pickNote, confirmView, blockHeading, attachedText, canChangeTarget, boundaryLine, areaRoadsLine, pageBadge, cantFind, questionActions };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ASCDocs = api;
 })(typeof window !== "undefined" ? window : globalThis);

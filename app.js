@@ -374,6 +374,8 @@
     if (s.block?.length) {
       d.append(el("h2", { style: "margin-top:14px" }, ASCDocs.blockHeading(s.block)));
       if (s.block_note) d.append(el("div", { class: "note adv" }, s.block_note));
+      const roadsLine = ASCDocs.areaRoadsLine(s.block_roads);                  // DEMO-2: what bounds the area
+      if (roadsLine) d.append(el("div", { class: "small", style: "margin:4px 0;color:#555" }, roadsLine));
       if (!readOnly && cfg.pageDecisions && (s.block_counts?.same_block || 0) > 0) {       // SWP-3/7: whole-block deed tasks, per search
         const on = !!s.block_deed_tasks;
         d.append(el("div", { class: "row small", style: "margin:6px 0" },
