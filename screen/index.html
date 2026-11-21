@@ -35,7 +35,6 @@
 <section class="hero" aria-labelledby="h1">
   <img class="hero-img" src="img/hero.jpg" alt="" width="1920" height="1080" fetchpriority="high">
   <div class="hero-shade"></div>
-  <svg class="hero-topo" id="heroTopo" aria-hidden="true" preserveAspectRatio="xMidYMid slice"></svg>
   <div class="hero-scan" aria-hidden="true"></div>
   <div class="hud" aria-hidden="true">
     <span class="hud-tl">Site screen · Texas</span>
@@ -81,9 +80,10 @@
     </div>
 
     <aside class="monitor" aria-label="What the screen reads">
-      <div class="mon-head"><span>Layer monitor</span><span class="mon-state" id="monState">Standing by</span></div>
-      <ol class="mon-list" id="monList"></ol>
-      <p class="mon-foot">Every layer is read live from the public agency that keeps it. If a service is down, that layer says so and nothing is assumed.</p>
+      <div class="mon-head"><span>The surveyor's worklist</span><span class="mon-state" id="monState">Standing by</span></div>
+      <div class="wf-bar" aria-hidden="true"><i></i></div>
+      <ol class="mon-list wf-list" id="monList"></ol>
+      <p class="mon-foot">Each step reads the public agency that keeps that record, live. If a service is down, that step says so and nothing is assumed.</p>
     </aside>
   </div>
 </section>
@@ -102,6 +102,8 @@
         <a class="btn btn-red" href="#packet" id="btnPacket">Email me the full packet</a>
       </div>
     </div>
+
+    <div class="wf-strip-wrap" aria-label="Survey steps"><div class="wf-strip-h"><span>Working the site</span><span id="wfState"></span></div><div class="wf-bar" aria-hidden="true"><i></i></div><ol class="wf-strip" id="wfStrip"></ol></div>
 
     <div class="insights" id="insights" aria-live="polite"></div>
 
@@ -133,7 +135,7 @@
       </div>
 
       <aside class="panel" aria-label="Screen summary">
-        <div class="panel-h"><span>Public record, layer by layer</span><span class="panel-live" id="panelLive">Live</span></div>
+        <div class="panel-h"><span>Public record · live</span><span class="panel-live" id="panelLive">Live</span></div>
         <ol class="readout" id="readout"></ol>
         <div class="adj" id="adjBox" hidden>
           <h4>Assemblage</h4>
