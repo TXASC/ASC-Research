@@ -1188,7 +1188,7 @@ function renderInsights(s){
   while(box.children.length > list.length) box.lastChild.remove();
 }
 /* hero reel: project-showcase aerials, played through slowly and cross-faded, one after another */
-const HERO_REEL = [];
+const HERO_REEL = ["img/reel/1.mp4","img/reel/2.mp4","img/reel/3.mp4"];
 function heroReel(){
   const box = $("#heroReel"); if(!box || !HERO_REEL.length || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   let i = 0; const mk = () => { const v = document.createElement("video"); v.muted = true; v.playsInline = true; v.preload = "auto"; v.setAttribute("muted",""); v.setAttribute("playsinline",""); box.appendChild(v); return v; };
