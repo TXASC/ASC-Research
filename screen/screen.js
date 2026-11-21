@@ -23,6 +23,7 @@ const CONFIG = {
   lidarIndex: "https://index.nationalmap.gov/arcgis/rest/services/3DEPElevationIndex/MapServer/8",
   lines: "https://services1.arcgis.com/Hp6G80Pky0om7QvQ/arcgis/rest/services/Electric_Power_Transmission_Lines/FeatureServer/0",
   imagery: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export",
+  vicinity: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/export",
   ercotPlanning: "https://www.ercot.com/gridinfo/planning",
   puctLargeLoad: "https://ftp.puc.texas.gov/public/puct-info/agency/rulesnlaws/subrules/electric/25.194/25.194.pdf",
   powerRadiusMi: 2
@@ -330,11 +331,11 @@ const SAMPLES = [
 /* ===== State ===== */
 let current = null, VIEW = "sheet", SKETCH = null, LIST = loadList();
 const LAYERS = [["aerial","Aerial","#8a9aa5"],["contours","Lidar contours","#9a6b3c"],["flood","FEMA flood","#3a74b0"],["wet","Wetlands (NWI)","#2f8a6a"],["water","Streams","#3a9bd0"],["adj","Neighbors","#7c8790"],["power","Transmission","#c27a10"]];
-const LAYER_ON = {aerial:true, contours:true, flood:true, wet:true, water:true, adj:true, power:true};
+const LAYER_ON = {aerial:false, contours:true, flood:true, wet:true, water:true, adj:true, power:true};
 
 /* ===== Build a site object ===== */
 function frameFor(rings){ const [x0,y0,x1,y1] = bbox(rings), w = x1-x0, h = y1-y0, s = Math.max(w,h), pad = Math.max(s*0.28, 180);
-  const cx=(x0+x1)/2, cy=(y0+y1)/2, aspect = 800/700; // drawing area aspect
+  const cx=(x0+x1)/2, cy=(y0+y1)/2, aspect = DW/DH; // drawing area aspect
   let fw = Math.max(w+2*pad, (h+2*pad)*aspect), fh = fw/aspect; return [cx-fw/2, cy-fh/2, cx+fw/2, cy+fh/2]; }
 function newSite(o){
   const s = {id: Date.now().toString(36), layers:{}, neighbors:[], added:[], ...o};
@@ -444,7 +445,7 @@ async function screenLayers(s, only){
   const c = s.center, toFt = rr => rr.map(r=>r.map(s.P.f));
   const job = async (key, fn) => { if(only && !only.includes(key)) return; setStatus(key,"wait"); L[key] = {status:"wait"}; renderReadout(s);
     try { L[key] = {status:"ok", ...(await fn())}; } catch(e){ L[key] = {status:"fail", err:String(e.message||e)}; }
-    if(s !== current) return; setStatus(key, L[key].status); renderReadout(s); drawSheet(s); };
+    if(s !== current) return; setStatus(key, L[key].status); renderReadout(s); drawSheet(s); renderInsights(s); };
   const tasks = [
     job("flood", async()=>{ const f = await fetchFlood(env, [c.lng,c.lat]); const polys = f.polys.map(p=>({...p, rings:toFt(p.ringsLL)})); return {polys, pointZone:f.pointZone, panel:f.panel, ...floodStats(s, polys)}; }),
     job("wet", async()=>{ const w = await fetchWetlands(env); const polys = w.map(p=>({...p, rings:toFt(p.ringsLL)})); return {polys, ...wetStats(s, polys)}; }),
@@ -464,7 +465,6 @@ async function screenLayers(s, only){
 }
 
 /* ===== Status / readout ===== */
-function setStatus(){ /* readout re-renders from layer state */ }
 function stateOf(s, key){ if(key==="parcel") return "ok"; const l = s.layers[key]; return !l ? "wait" : l.status==="ok" ? "ok" : l.status==="wait" ? "wait" : l.status==="na" ? "off" : "na"; }
 function readoutRow(k, label, value, sub, st){ return `<li><span class="st ${st}" aria-hidden="true"></span><div><div class="ro-k">${esc(label)}</div><div class="ro-v">${value}</div>${sub?`<div class="ro-s">${sub}</div>`:""}</div></li>`; }
 function failText(l){ return l && l.status==="fail" ? "The public service didn't answer, so this layer is left off. Nothing was assumed." : "Loading…"; }
@@ -495,8 +495,12 @@ function renderReadout(s){
   }
 }
 
-/* ===== Sheet (SVG) ===== */
-const DW = 800, DH = 700, DX = 20, DY = 40; // drawing area inside the 1100 x 760 sheet
+/* ===== Sheet (SVG), laid out on ASC's 24x36 sheet template ===== */
+const SW = 1200, SH = 800;                     // sheet, 1.5:1 like a 24x36 plot
+const DX = 14, DY = 14, DW = 786, DH = 772;    // drawing area
+const NX = 810, NW = 276;                      // notes column
+const TX = 1092, TW = 100;                     // title strip
+const SF = "IBM Plex Sans Condensed, Arial Narrow, sans-serif";
 function sheetXform(s){ const [x0,y0,x1,y1] = s.frame, k = DW/(x1-x0); return { k, X:x=>DX+(x-x0)*k, Y:y=>DY+(y1-y)*k, inv:(px,py)=>[x0+(px-DX)/k, y1-(py-DY)/k] }; }
 function pathOf(rings, T, close=true){ return rings.map(r=>r.map((p,i)=>(i?"L":"M")+T.X(p[0]).toFixed(1)+" "+T.Y(p[1]).toFixed(1)).join("")+(close?"Z":"")).join(""); }
 function niceStep(span){ const raw=span/5, p=Math.pow(10,Math.floor(Math.log10(raw))); for(const m of [1,2,2.5,5,10]) if(m*p>=raw) return m*p; return 10*p; }
@@ -516,118 +520,181 @@ function contourSegs(g, iv){ // marching squares, returns [[x1,y1,x2,y2,level],.
   }
   return out;
 }
+function wrapTxt(s, n){ const out=[]; let line=""; String(s).split(/\s+/).forEach(w=>{ if((line+" "+w).trim().length>n && line){ out.push(line); line=w; } else line=(line+" "+w).trim(); }); if(line) out.push(line); return out; }
+const mdY = () => { const d = new Date(); return String(d.getMonth()+1).padStart(2,"0")+"/"+String(d.getDate()).padStart(2,"0")+"/"+d.getFullYear(); };
+function screenNo(s){ const h = [...String(listKey(s))].reduce((a,c)=>(a*31 + c.charCodeAt(0))>>>0, 7); return "S" + String(new Date().getFullYear()).slice(2) + "-" + (h % 100000).toString().padStart(5,"0"); }
+function sheetTitleLines(s){
+  const r = s.refs || {}, j = s.layers.juris, city = j && j.status==="ok" && j.name ? "City of " + titleCase(j.name) + ", " : "";
+  const cty = s.county ? titleCase(s.county) + " County, Texas" : "Texas";
+  const rec = [r.lot && "Lot " + r.lot, r.block && "Block " + r.block, r.addition && titleCase(r.addition) + (r.platted && !/ADD/.test(r.addition) ? " Addition" : "")].filter(Boolean).join(", ");
+  const abs = r.abstract ? "Abstract No. " + r.abstract : "";
+  return ["PRELIMINARY SITE SCREEN", String(s.title||"Site").toUpperCase(), `BEING ${acTxt(s.acres)} ACRES ±`, rec || abs || (s.sample ? "ILLUSTRATIVE SAMPLE TRACT" : s.sketch ? "SKETCHED OUTLINE" : "APPRAISAL PARCEL"), city + cty].map(t=>t.length>58?t.slice(0,56)+"…":t);
+}
 function drawSheet(s){
   if(!s) return; const svg = $("#sheet"), T = sheetXform(s), L = s.layers, o = [];
-  const [x0,y0,x1,y1] = s.frame;
+  const [x0,y0,x1,y1] = s.frame, seen = s._seen || (s._seen = new Set());
+  const fx = k => { if(seen.has(k)) return ""; seen.add(k); return ' class="fx"'; };
   o.push(`<defs>
     <clipPath id="cpDraw"><rect x="${DX}" y="${DY}" width="${DW}" height="${DH}"/></clipPath>
-    <clipPath id="cpTract"><path d="${pathOf(s.rings,T)}" clip-rule="evenodd"/></clipPath>
-    <pattern id="hFlood" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="9" stroke="#3a74b0" stroke-width="1.6" stroke-opacity=".75"/></pattern>
-    <pattern id="hWay" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#1d4f86" stroke-width="1.6"/></pattern>
-    <pattern id="hWet" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M2 7h6M5 4v3M3 5l2 2 2-2" stroke="#2f8a6a" stroke-width="1" fill="none"/></pattern>
+    <clipPath id="cpVic"><rect x="${NX+150}" y="${DY+4}" width="${NW-152}" height="112"/></clipPath>
+    <pattern id="hFlood" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="8" stroke="#2f6aa8" stroke-width="1.1" stroke-opacity=".8"/></pattern>
+    <pattern id="hWay" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)"><line x1="0" y1="0" x2="0" y2="5" stroke="#173f6e" stroke-width="1.3"/></pattern>
+    <pattern id="hWet" width="12" height="10" patternUnits="userSpaceOnUse"><path d="M3 8h6M6 5v3M4 6l2 2 2-2" stroke="#2c7a5d" stroke-width=".9" fill="none"/></pattern>
+    <filter id="gray"><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncR type="linear" slope="1.08"/><feFuncG type="linear" slope="1.08"/><feFuncB type="linear" slope="1.08"/></feComponentTransfer></filter>
   </defs>`);
-  o.push(`<rect x="0" y="0" width="1100" height="760" fill="#fff"/>`);
-  o.push(`<rect x="${DX}" y="${DY}" width="${DW}" height="${DH}" fill="#F5FEFF"/>`);
+  // paper and sheet border (rounded, heavy, like the plotted sheets)
+  o.push(`<rect x="0" y="0" width="${SW}" height="${SH}" fill="#fff"/>`);
   o.push(`<g clip-path="url(#cpDraw)">`);
-  // aerial
   const aerialOn = LAYER_ON.aerial && !s.sample;
   if(aerialOn){ const a = s.P.i([x0,y0]), b = s.P.i([x1,y1]);
-    const url = CONFIG.imagery + "?" + qs({bbox:[a[0],a[1],b[0],b[1]].join(","), bboxSR:4326, imageSR:4326, size:"1200,1050", format:"jpg", f:"image"});
-    o.push(`<image href="${esc(url)}" x="${DX}" y="${DY}" width="${DW}" height="${DH}" preserveAspectRatio="none" opacity=".78"/>`);
-    o.push(`<rect x="${DX}" y="${DY}" width="${DW}" height="${DH}" fill="#0E1F2D" opacity=".12"/>`); }
-  else { // faint section grid on paper
-    const st = niceStep((x1-x0)/1.2); for(let gx=Math.ceil(x0/st)*st; gx<x1; gx+=st) o.push(`<line x1="${T.X(gx)}" y1="${DY}" x2="${T.X(gx)}" y2="${DY+DH}" stroke="#dfe7ea" stroke-width="1"/>`);
-    for(let gy=Math.ceil(y0/st)*st; gy<y1; gy+=st) o.push(`<line x1="${DX}" y1="${T.Y(gy)}" x2="${DX+DW}" y2="${T.Y(gy)}" stroke="#dfe7ea" stroke-width="1"/>`); }
-  const ink = aerialOn ? "#fff" : "#0E1F2D";
-  // contours
+    const url = CONFIG.imagery + "?" + qs({bbox:[a[0],a[1],b[0],b[1]].join(","), bboxSR:4326, imageSR:4326, size:"1180,1160", format:"jpg", f:"image"});
+    o.push(`<image href="${esc(url)}" x="${DX}" y="${DY}" width="${DW}" height="${DH}" preserveAspectRatio="none" opacity=".62"/>`); }
+  const ink = "#111", halo = "#fff";
+  // contours: light index-and-intermediate pattern like a plotted topo
   const t = L.terrain;
   if(LAYER_ON.contours && t && t.status==="ok"){
     const fr = frameRelief(t.grid), iv = [1,2,5,10,20,50,100].find(v => fr/v <= 16) || 100, segs = contourSegs(t.grid, iv);
     const major = iv*5, minor = [], maj = [];
     for(const g of segs) (Math.abs(g[4]/major-Math.round(g[4]/major))<1e-6 ? maj : minor).push(`M${T.X(g[0]).toFixed(1)} ${T.Y(g[1]).toFixed(1)}L${T.X(g[2]).toFixed(1)} ${T.Y(g[3]).toFixed(1)}`);
-    const cc = aerialOn ? "#ffe2b8" : "#9a6b3c";
-    o.push(`<path d="${minor.join("")}" stroke="${cc}" stroke-width=".7" fill="none" opacity="${aerialOn?.55:.5}"/>`);
-    o.push(`<path d="${maj.join("")}" stroke="${cc}" stroke-width="1.3" fill="none" opacity="${aerialOn?.8:.75}"/>`);
+    o.push(`<g${fx("contours")}><path d="${minor.join("")}" stroke="${aerialOn?"#fff":"#8c8c8c"}" stroke-width=".55" fill="none" opacity="${aerialOn?.55:.9}"/>`);
+    o.push(`<path d="${maj.join("")}" stroke="${aerialOn?"#fff":"#555"}" stroke-width="1" fill="none" opacity="${aerialOn?.85:.95}"/></g>`);
     s._contourIv = iv;
   }
   // flood
   const f = L.flood;
-  if(LAYER_ON.flood && f && f.status==="ok"){
-    for(const p of f.polys.filter(p=>p.sfha && !p.floodway)) o.push(`<path d="${pathOf(p.rings,T)}" fill="url(#hFlood)" fill-rule="evenodd" stroke="#3a74b0" stroke-width="1.2" stroke-opacity=".8"/>`);
-    for(const p of f.polys.filter(p=>p.floodway)) o.push(`<path d="${pathOf(p.rings,T)}" fill="url(#hWay)" fill-rule="evenodd" stroke="#1d4f86" stroke-width="1.2"/>`);
-    for(const p of f.polys.filter(p=>/0\.2/.test(p.zone||""))) o.push(`<path d="${pathOf(p.rings,T)}" fill="#3a74b0" fill-opacity=".07" stroke="#3a74b0" stroke-dasharray="4 3" stroke-width=".9"/>`);
-  }
-  // wetlands
+  if(LAYER_ON.flood && f && f.status==="ok"){ o.push(`<g${fx("flood")}>`);
+    for(const p of f.polys.filter(p=>p.sfha && !p.floodway)) o.push(`<path d="${pathOf(p.rings,T)}" fill="url(#hFlood)" fill-rule="evenodd" stroke="#2f6aa8" stroke-width="1" stroke-dasharray="10 3 2 3"/>`);
+    for(const p of f.polys.filter(p=>p.floodway)) o.push(`<path d="${pathOf(p.rings,T)}" fill="url(#hWay)" fill-rule="evenodd" stroke="#173f6e" stroke-width="1"/>`);
+    for(const p of f.polys.filter(p=>/0\.2/.test(p.zone||""))) o.push(`<path d="${pathOf(p.rings,T)}" fill="none" stroke="#2f6aa8" stroke-dasharray="3 3" stroke-width=".8"/>`);
+    o.push(`</g>`); }
   const w = L.wet;
-  if(LAYER_ON.wet && w && w.status==="ok") for(const p of w.polys) o.push(`<path d="${pathOf(p.rings,T)}" fill="url(#hWet)" fill-rule="evenodd" stroke="#2f8a6a" stroke-width="1.1"/>`);
-  // water
+  if(LAYER_ON.wet && w && w.status==="ok"){ o.push(`<g${fx("wet")}>`); for(const p of w.polys) o.push(`<path d="${pathOf(p.rings,T)}" fill="url(#hWet)" fill-rule="evenodd" stroke="#2c7a5d" stroke-width=".9"/>`); o.push(`</g>`); }
   const wa = L.water;
-  if(LAYER_ON.water && wa && wa.status==="ok") for(const i of wa.items){
-    if(i.paths) o.push(`<path d="${pathOf(i.paths,T,false)}" fill="none" stroke="#3a9bd0" stroke-width="2"/>`);
-    if(i.rings) o.push(`<path d="${pathOf(i.rings,T)}" fill="#3a9bd0" fill-opacity=".35" stroke="#3a9bd0" stroke-width="1"/>`); }
-  // neighbors
+  if(LAYER_ON.water && wa && wa.status==="ok"){ o.push(`<g${fx("water")}>`); for(const i of wa.items){
+    if(i.paths) o.push(`<path d="${pathOf(i.paths,T,false)}" fill="none" stroke="#2a86c0" stroke-width="1.6"/>`);
+    if(i.rings) o.push(`<path d="${pathOf(i.rings,T)}" fill="#2a86c0" fill-opacity=".18" stroke="#2a86c0" stroke-width=".9"/>`); } o.push(`</g>`); }
+  // neighbors, labeled from the appraisal roll like adjoiner callouts
   const A = L.adj;
-  if(LAYER_ON.adj && A && A.status==="ok") for(const n of A.items) o.push(`<path class="adjp" data-oid="${esc(n.oid)}" d="${pathOf(n.rings,T)}" fill="rgba(255,255,255,0.001)" stroke="${aerialOn?"#e6edf0":"#7c8790"}" stroke-width=".9" stroke-dasharray="5 4"/>`);
-  // transmission
+  if(LAYER_ON.adj && A && A.status==="ok"){ o.push(`<g${fx("adj")}>`);
+    for(const n of A.items) o.push(`<path class="adjp" data-oid="${esc(n.oid)}" d="${pathOf(n.rings,T)}" fill="rgba(255,255,255,0.001)" stroke="${aerialOn?"#f2f2f2":"#6d6d6d"}" stroke-width=".7"/>`);
+    const lab = A.items.map(n=>{ const b = bbox(n.rings), wpx = (b[2]-b[0])*T.k, hpx = (b[3]-b[1])*T.k; return {n, wpx, hpx}; }).filter(x=>x.wpx>90 && x.hpx>34 && x.n.legal).sort((a,b)=>b.wpx*b.hpx-a.wpx*a.hpx).slice(0,14);
+    for(const {n, wpx} of lab){ const [cx,cy] = interiorPoint(n.rings), lines = wrapTxt(String(n.legal).toUpperCase(), Math.max(14, Math.min(34, Math.floor(wpx/5.2)))).slice(0,3);
+      if(!inRings(cx,cy,n.rings)) continue;
+      o.push(`<text x="${T.X(cx).toFixed(1)}" y="${(T.Y(cy)-(lines.length-1)*4.5).toFixed(1)}" font-family="${SF}" font-size="6.6" text-anchor="middle" fill="${aerialOn?"#fff":"#333"}" paint-order="stroke" stroke="${aerialOn?"#111":halo}" stroke-width="${aerialOn?2:2.4}" pointer-events="none">${lines.map((l,i)=>`<tspan x="${T.X(cx).toFixed(1)}" dy="${i?9:0}">${esc(l)}</tspan>`).join("")}</text>`); }
+    o.push(`</g>`); }
   const pw = L.power;
-  if(LAYER_ON.power && pw && pw.status==="ok") for(const l of pw.lines){ o.push(`<path d="${pathOf(l.paths,T,false)}" fill="none" stroke="#c27a10" stroke-width="2.4" stroke-dasharray="14 4 2 4"/>`); }
-  // tract
-  o.push(`<path d="${pathOf(s.rings,T)}" fill="${aerialOn?"rgba(146,26,29,.10)":"rgba(146,26,29,.05)"}" fill-rule="evenodd" stroke="#921A1D" stroke-width="3" class="tract"/>`);
-  if(s.added.length) for(const p of s.parcels) o.push(`<path class="adjp sel" data-oid="${esc(p.oid)}" d="${pathOf(p.ringsLL.map(r=>r.map(s.P.f)),T)}" fill="rgba(146,26,29,.001)" stroke="#921A1D" stroke-width="1" stroke-dasharray="3 3"/>`);
-  // low point marker
-  if(t && t.status==="ok" && t.lowSide){ /* described in text, not marked, to avoid looking like a located shot */ }
-  // labels
-  const [cx,cy] = centroid(s.rings);
-  o.push(`<g font-family="IBM Plex Mono, monospace" text-anchor="middle"><text x="${T.X(cx)}" y="${T.Y(cy)-4}" font-size="15" font-weight="600" fill="${ink}" paint-order="stroke" stroke="${aerialOn?"#0E1F2D":"#fff"}" stroke-width="3.5">${acTxt(s.acres)} AC ±</text>
-    <text x="${T.X(cx)}" y="${T.Y(cy)+14}" font-size="10.5" fill="${ink}" paint-order="stroke" stroke="${aerialOn?"#0E1F2D":"#fff"}" stroke-width="3">${s.sample?"SAMPLE TRACT":s.sketch?"SKETCHED OUTLINE":"APPRAISAL PARCEL"}</text></g>`);
-  // sketch in progress
+  if(LAYER_ON.power && pw && pw.status==="ok"){ o.push(`<g${fx("power")}>`); for(const l of pw.lines) o.push(`<path d="${pathOf(l.paths,T,false)}" fill="none" stroke="#b2600b" stroke-width="1.6" stroke-dasharray="16 4 3 4"/>`); o.push(`</g>`); }
+  // tract: pale tint and a heavy boundary-weight line, as on the plotted sheets
+  o.push(`<path d="${pathOf(s.rings,T)}" fill="${aerialOn?"rgba(146,26,29,.16)":"rgba(208,49,45,.12)"}" fill-rule="evenodd" stroke="${aerialOn?"#fff":"#111"}" stroke-width="2.6" stroke-linejoin="round" class="tract"/>`);
+  if(aerialOn) o.push(`<path d="${pathOf(s.rings,T)}" fill="none" stroke="#921A1D" stroke-width="1.2" pointer-events="none"/>`);
+  if(s.added.length) for(const p of s.parcels) o.push(`<path class="adjp sel" data-oid="${esc(p.oid)}" d="${pathOf(p.ringsLL.map(r=>r.map(s.P.f)),T)}" fill="rgba(146,26,29,.001)" stroke="#921A1D" stroke-width=".9" stroke-dasharray="3 3"/>`);
+  const [cx,cy] = interiorPoint(s.rings), lc = aerialOn ? "#fff" : ink, ls = aerialOn ? "#111" : halo;
+  const lbl = [`${acTxt(s.acres)} ACRES ±`, `(${fmt(sig2(s.areaSqft),0)} SQ. FT. ±)`, s.sample ? "SAMPLE TRACT" : s.sketch ? "SKETCHED OUTLINE" : s.added.length ? "APPRAISAL PARCELS (COMBINED)" : "APPRAISAL PARCEL"];
+  const r = s.refs || {}; if(r.lot || r.block) lbl.push([r.lot&&"LOT "+r.lot, r.block&&"BLOCK "+r.block].filter(Boolean).join(", ")); if(s.propId && !s.added.length) lbl.push("APPRAISAL ID " + s.propId);
+  o.push(`<text x="${T.X(cx).toFixed(1)}" y="${(T.Y(cy)-lbl.length*5).toFixed(1)}" font-family="${SF}" text-anchor="middle" fill="${lc}" paint-order="stroke" stroke="${ls}" stroke-width="3" pointer-events="none">${lbl.map((l,i)=>`<tspan x="${T.X(cx).toFixed(1)}" dy="${i?12:0}" font-size="${i===0?12.5:8.6}" font-weight="${i===0?600:400}">${esc(l)}</tspan>`).join("")}</text>`);
   if(SKETCH && SKETCH.pts.length){ o.push(`<path d="${pathOf([SKETCH.pts],T,SKETCH.pts.length>2)}" fill="rgba(146,26,29,.12)" stroke="#921A1D" stroke-width="2" stroke-dasharray="6 3"/>`);
     for(const p of SKETCH.pts) o.push(`<circle cx="${T.X(p[0])}" cy="${T.Y(p[1])}" r="4" fill="#921A1D"/>`); }
-  // watermark
-  o.push(`<g transform="translate(${DX+DW/2} ${DY+DH/2}) rotate(-28)" font-family="Monda, sans-serif" font-weight="700" text-anchor="middle" fill="${aerialOn?"#fff":"#921A1D"}" opacity="${aerialOn?.2:.1}"><text font-size="54" y="-10" letter-spacing="6">PRELIMINARY</text><text font-size="34" y="40" letter-spacing="8">NOT A SURVEY</text></g>`);
+  o.push(`<g transform="translate(${DX+DW/2} ${DY+DH/2}) rotate(-30)" font-family="${SF}" font-weight="600" text-anchor="middle" fill="${aerialOn?"#fff":"#921A1D"}" opacity="${aerialOn?.22:.09}" pointer-events="none"><text font-size="64" y="-12" letter-spacing="10">PRELIMINARY</text><text font-size="38" y="40" letter-spacing="12">NOT A SURVEY</text></g>`);
   o.push(`</g>`);
-  // drawing frame + top band
-  o.push(`<rect x="${DX}" y="${DY}" width="${DW}" height="${DH}" fill="none" stroke="#0E1F2D" stroke-width="1.5"/>`);
-  o.push(`<rect x="${DX}" y="10" width="${DW}" height="24" fill="#921A1D"/><text x="${DX+12}" y="27" font-family="IBM Plex Mono, monospace" font-size="12" font-weight="600" fill="#fff" letter-spacing="1">PRELIMINARY SITE SCREEN · NOT A SURVEY · PUBLIC DATA, APPROXIMATE</text>`);
-  // north arrow + scale
-  const nx = DX+DW-46, ny = DY+DH-92;
-  o.push(`<g transform="translate(${nx} ${ny})"><circle r="22" fill="#fff" fill-opacity=".92" stroke="#0E1F2D"/><path d="M0 -17L7 9 0 4 -7 9Z" fill="#0E1F2D"/><text y="-26" text-anchor="middle" font-family="Monda, sans-serif" font-size="12" font-weight="700" fill="${ink}" paint-order="stroke" stroke="${aerialOn?"#0E1F2D":"#fff"}" stroke-width="3">N</text></g>`);
-  const sb = niceStep((x1-x0)/2.2), sbw = sb*T.k, sx = DX+18, sy = DY+DH-22;
-  o.push(`<g font-family="IBM Plex Mono, monospace" font-size="11"><rect x="${sx-8}" y="${sy-22}" width="${sbw+70}" height="34" fill="#fff" fill-opacity=".92"/>
-    <rect x="${sx}" y="${sy-6}" width="${sbw/2}" height="6" fill="#0E1F2D"/><rect x="${sx+sbw/2}" y="${sy-6}" width="${sbw/2}" height="6" fill="#fff" stroke="#0E1F2D"/>
-    <text x="${sx}" y="${sy-10}" fill="#0E1F2D">0</text><text x="${sx+sbw}" y="${sy-10}" text-anchor="middle" fill="#0E1F2D">${fmt(sb,0)} ft</text><text x="${sx+sbw+10}" y="${sy}" fill="#5f6d79">approx.</text></g>`);
-  // title block
-  const tx = 840, tw = 240; let ty = 10;
-  o.push(`<rect x="${tx}" y="10" width="${tw}" height="730" fill="#0E1F2D"/>`);
-  o.push(`<image href="img/logo.png" x="${tx+16}" y="${ty+14}" width="130" height="50"/>`); ty += 82;
-  const tline = (txt, size, col, weight=400, fam="IBM Plex Sans, sans-serif") => { const lines = wrapTxt(txt, Math.floor(tw*(fam.startsWith("Monda")||fam.includes("Mono")?1.5:1.85)/size)); const r = lines.map((l,i)=>`<text x="${tx+16}" y="${ty+i*(size+4)}" font-family="${fam}" font-size="${size}" font-weight="${weight}" fill="${col}">${esc(l)}</text>`).join(""); ty += lines.length*(size+4); return r; };
-  o.push(tline("PRELIMINARY SITE SCREEN", 13, "#f2b9ba", 600, "IBM Plex Mono, monospace")); ty += 4;
-  o.push(tline(s.title || "Site", 16, "#fff", 700, "Monda, sans-serif")); ty += 2;
-  o.push(tline(s.area || "", 11.5, "#a9bdc8")); ty += 10;
-  const kv = (k,v) => { if(!v) return ""; const r = `<text x="${tx+16}" y="${ty}" font-family="IBM Plex Mono, monospace" font-size="9.5" fill="#93aab8" letter-spacing=".6">${esc(k.toUpperCase())}</text>`; ty += 13; return r + tline(v, 11, "#e8f1f4") + (ty += 5, ""); };
-  o.push(kv("Area", `${acTxt(s.acres)} acres (GIS, approx.)`));
-  if(s.legal) o.push(kv("Appraisal legal", s.legal.length > 90 ? s.legal.slice(0,88)+"…" : s.legal));
-  if(s.propId) o.push(kv("Appraisal ID", s.propId));
-  const fz = f && f.status==="ok" ? (f.shareSFHA>0.005 ? `~${fmt(f.shareSFHA*100,0)}% in mapped 1% floodplain` : "Outside mapped 1% floodplain") : "Not loaded";
-  o.push(kv("FEMA (approx.)", fz));
-  if(t && t.status==="ok") o.push(kv("Lidar terrain (approx.)", `${fmt(t.min,0)}–${fmt(t.max,0)} ft, ${s._contourIv||""}-ft contours`));
-  o.push(kv("Screened", today()));
-  // legend
-  ty += 4; o.push(`<line x1="${tx+16}" y1="${ty}" x2="${tx+tw-16}" y2="${ty}" stroke="#2d465b"/>`); ty += 18;
-  const leg = [["#921A1D","solid","Screened tract"],["#7c8790","dash","Neighboring appraisal parcels"],["#3a74b0","hatch","FEMA 1% annual-chance area"],["#1d4f86","hatch2","Mapped floodway"],["#2f8a6a","wet","NWI wetland or water"],["#3a9bd0","line","Mapped stream"],["#9a6b3c","line","Lidar contour"],["#c27a10","dashdot","Transmission line (public)"]];
-  for(const [c,kind,label] of leg){ const y = ty;
-    o.push(kind==="solid"?`<rect x="${tx+16}" y="${y-9}" width="18" height="11" fill="none" stroke="${c}" stroke-width="2.5"/>`:kind==="dash"?`<line x1="${tx+16}" y1="${y-4}" x2="${tx+34}" y2="${y-4}" stroke="#c9d1d6" stroke-dasharray="4 3"/>`:kind==="hatch"?`<rect x="${tx+16}" y="${y-9}" width="18" height="11" fill="url(#hFlood)" stroke="${c}"/>`:kind==="hatch2"?`<rect x="${tx+16}" y="${y-9}" width="18" height="11" fill="url(#hWay)" stroke="${c}"/>`:kind==="wet"?`<rect x="${tx+16}" y="${y-9}" width="18" height="11" fill="#2f8a6a" fill-opacity=".35" stroke="${c}"/>`:kind==="dashdot"?`<line x1="${tx+16}" y1="${y-4}" x2="${tx+34}" y2="${y-4}" stroke="${c}" stroke-width="2.4" stroke-dasharray="7 2 2 2"/>`:`<line x1="${tx+16}" y1="${y-4}" x2="${tx+34}" y2="${y-4}" stroke="${kind==="line"&&label.startsWith("Lidar")?"#d9a46b":c}" stroke-width="2"/>`);
-    o.push(`<text x="${tx+42}" y="${y}" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="#d5e3e8">${esc(label)}</text>`); ty += 17; }
-  // sources + disclaimer at bottom of the title block
-  let by = Math.max(ty + 22, 470); o.push(`<line x1="${tx+16}" y1="${by}" x2="${tx+tw-16}" y2="${by}" stroke="#2d465b"/>`); by += 16;
-  const srcTxt = s.sample ? "Illustrative sample. Shapes, figures and sources are examples only." : "Sources: TxGIO parcels, city limits and NHD; FEMA NFHL; USFWS NWI; USDA NRCS SSURGO; USGS 3DEP; HIFLD; Esri World Imagery.";
-  for(const l of wrapTxt(srcTxt, 38)){ o.push(`<text x="${tx+16}" y="${by}" font-family="IBM Plex Mono, monospace" font-size="8.6" fill="#93aab8">${esc(l)}</text>`); by += 11; }
-  by += 6;
-  for(const l of wrapTxt("NOT A SURVEY. Not certified. Not for conveyance, design or construction. Appraisal parcel lines can be off by tens of feet. All figures approximate.", 40)){ o.push(`<text x="${tx+16}" y="${by}" font-family="IBM Plex Sans, sans-serif" font-size="9.6" font-weight="600" fill="#f2b9ba">${esc(l)}</text>`); by += 12; }
-  by += 8; o.push(`<text x="${tx+16}" y="${Math.min(by,728)}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#d5e3e8">Adams Surveying Company · (469) 317-0250</text>`);
+  o.push(notesColumn(s, T));
+  o.push(titleStrip(s));
+  o.push(`<rect x="5" y="5" width="${SW-10}" height="${SH-10}" rx="16" fill="none" stroke="#111" stroke-width="2.2"/>`);
   svg.innerHTML = `<title id="sheetTitle">Preliminary site screen sheet for ${esc(s.title||"site")}</title>` + o.join("");
 }
-function wrapTxt(s, n){ const out=[]; let line=""; String(s).split(/\s+/).forEach(w=>{ if((line+" "+w).trim().length>n && line){ out.push(line); line=w; } else line=(line+" "+w).trim(); }); if(line) out.push(line); return out; }
+function notesColumn(s, T){
+  const o = [], L = s.layers, f = L.flood, t = L.terrain, w = L.wet, wa = L.water, so = L.soils, pw = L.power, j = L.juris;
+  // vicinity map, north arrow and graphic scale at the top right, as on the plotted sheets
+  const vx = NX+150, vy = DY+4, vw = NW-152, vh = 112;
+  o.push(`<rect x="${vx}" y="${vy}" width="${vw}" height="${vh}" fill="#f4f4f4" stroke="#111" stroke-width=".8"/>`);
+  o.push(`<g clip-path="url(#cpVic)">`);
+  const half = Math.max(5200, Math.sqrt(s.areaSqft)*7), hy = half*vh/vw;
+  if(!s.sample){ const a = s.P.i([-half,-hy]), b = s.P.i([half,hy]);
+    const url = CONFIG.vicinity + "?" + qs({bbox:[a[0],a[1],b[0],b[1]].join(","), bboxSR:4326, imageSR:4326, size:Math.round(vw*3)+","+Math.round(vh*3), format:"png", f:"image"});
+    o.push(`<image href="${esc(url)}" x="${vx}" y="${vy}" width="${vw}" height="${vh}" preserveAspectRatio="none" filter="url(#gray)"/>`); }
+  else for(let i=1;i<6;i++) o.push(`<path d="M${vx} ${vy+i*vh/6+((i*37)%11)}L${vx+vw} ${vy+i*vh/6-((i*23)%9)}M${vx+i*vw/6} ${vy}L${vx+i*vw/6+((i*13)%7)} ${vy+vh}" stroke="#c9c9c9" stroke-width="${i===3?2:.8}"/>`);
+  const vk = vw/(2*half), VX = x=>vx+vw/2+x*vk, VY = y=>vy+vh/2-y*vk;
+  const vr = s.rings.map(r=>r.map((p,i)=>(i?"L":"M")+VX(p[0]).toFixed(1)+" "+VY(p[1]).toFixed(1)).join("")+"Z").join("");
+  o.push(`<path d="${vr}" fill="#111" stroke="#111" stroke-width="1"/><circle cx="${VX(0)}" cy="${VY(0)}" r="7" fill="none" stroke="#111" stroke-width="1"/>`);
+  o.push(`<text x="${VX(0)+10}" y="${VY(0)-8}" font-family="${SF}" font-size="11" font-weight="600" fill="#111" paint-order="stroke" stroke="#fff" stroke-width="3">SITE</text></g>`);
+  o.push(`<text x="${vx+vw/2}" y="${vy+vh+11}" font-family="${SF}" font-size="8" text-anchor="middle" fill="#111" text-decoration="underline">VICINITY MAP</text><text x="${vx+vw/2}" y="${vy+vh+20}" font-family="${SF}" font-size="7" text-anchor="middle" fill="#111">NOT TO SCALE</text>`);
+  const ax = vx+vw/2, ay = vy+vh+30;
+  o.push(`<g transform="translate(${ax} ${ay})"><text y="7" text-anchor="middle" font-family="${SF}" font-size="11" font-weight="600" fill="#111">N</text><path d="M0 11L4 40 0 36 -4 40Z" fill="#111"/><line x1="0" y1="36" x2="0" y2="58" stroke="#111" stroke-width=".8"/><circle cy="44" r="4.5" fill="none" stroke="#111" stroke-width=".8"/></g>`);
+  const [fx0,,fx1] = s.frame, sb = niceStep((fx1-fx0)/2.6), sbw = sb*T.k, sx = ax - sbw/2, sy = ay + 72;
+  if(sbw < vw+20){ o.push(`<g font-family="${SF}" font-size="7" fill="#111"><rect x="${sx}" y="${sy}" width="${sbw/4}" height="4" fill="#111"/><rect x="${sx+sbw/4}" y="${sy}" width="${sbw/4}" height="4" fill="#fff" stroke="#111" stroke-width=".6"/><rect x="${sx+sbw/2}" y="${sy}" width="${sbw/2}" height="4" fill="#111"/>
+    <text x="${sx}" y="${sy-3}" text-anchor="middle">0</text><text x="${sx+sbw/2}" y="${sy-3}" text-anchor="middle">${fmt(sb/2,0)}</text><text x="${sx+sbw}" y="${sy-3}" text-anchor="middle">${fmt(sb,0)}</text><text x="${sx+sbw+4}" y="${sy+4}">Feet</text>
+    <text x="${ax}" y="${sy+14}" text-anchor="middle">GRAPHIC SCALE (APPROX.)</text></g>`); }
+  // text blocks
+  let y = DY + 8, colX = NX, colW = 140;
+  const LH = 9.4, FS = 7.3;
+  const head = h => { o.push(`<text x="${colX}" y="${y}" font-family="${SF}" font-size="8" font-weight="600" fill="#111" text-decoration="underline">${esc(h)}</text>`); y += 11; };
+  const para = (txt, ind=0) => { const up = txt === txt.toUpperCase(), n = Math.floor((colW-ind)/(up?4.1:3.4)); for(const l of wrapTxt(txt, n)){ o.push(`<text x="${colX+ind}" y="${y}" font-family="${SF}" font-size="${FS}" fill="#1a1a1a">${esc(l)}</text>`); y += LH; } };
+  const num = (k, txt) => { o.push(`<text x="${colX}" y="${y}" font-family="${SF}" font-size="${FS}" fill="#1a1a1a">${k}.</text>`); para(txt, 10); y += 2.5; };
+  const widen = () => { if(y > DY + 222 && colW < NW){ colW = NW; } };
+  head("RECORD INFORMATION (APPRAISAL ROLL)");
+  if(s.sample) para("Illustrative sample tract. Shapes, figures and record data are examples only.");
+  else if(s.sketch) para("Outline sketched on the Site Screen page. No appraisal record is attached to it.");
+  else { para(s.legal ? String(s.legal) : "No legal description on the appraisal roll for this parcel.");
+    y += 2; para([s.propId && "Appraisal ID " + s.propId, s.county && titleCase(s.county) + " County", s.taxYear && "Tax year " + s.taxYear].filter(Boolean).join(" · ")); }
+  y += 6; widen();
+  head("GENERAL NOTES"); widen();
+  const lid = t && t.grid && t.grid.lidar;
+  const gn = [
+    "This sheet assembles public data. No field work was performed and nothing shown was located on the ground.",
+    "Tract lines come from county appraisal mapping (TxGIO StratMap), drawn for tax purposes. They can be off by tens of feet and are not a boundary.",
+    t && t.status==="ok" ? `Contours are generated from USGS 3DEP public lidar${lid&&lid.project&&!s.sample?` (${lid.project}${lid.end?", "+yrs(lid.start,lid.end):""})`:""} at a ${s._contourIv||"–"}-ft interval and are approximate. Not a design topographic survey.` : "Public lidar contours were not available for this sheet.",
+    "Positions are geographic (WGS 84) from public map services. No survey datum, coordinate system or survey basis is established.",
+    "Transmission lines (HIFLD) show proximity only. They say nothing about capacity, service, cost or timing."];
+  gn.forEach((g,i)=>{ num(i+1, g); widen(); });
+  y += 4; widen();
+  head("FLOOD STATEMENT");
+  if(f && f.status==="ok"){ const pin = f.shareSFHA, zones = f.zonesOnTract.length ? f.zonesOnTract.join(", ") : "X (minimal)";
+    para(`According to the FEMA National Flood Hazard Layer${f.panel&&!s.sample?` (study ${f.panel})`:""}, queried ${today()}, ${pin>0.005?`approximately ${fmt(pin*100,0)}% of this tract lies within the mapped 1% annual-chance floodplain and approximately ${fmt((1-pin)*100,0)}% lies outside mapped floodplain`:`this tract lies outside the mapped 1% annual-chance floodplain`}. Zones touching the tract: ${zones}.${f.shareFloodway>0.005?` About ${fmt(f.shareFloodway*100,0)}% is in mapped floodway.`:""} Percentages are an approximation from an aligned FEMA map overlay, not an on-the-ground elevation survey. This statement does not imply that the property will or will not be free from flooding.`); }
+  else para(f && f.status==="fail" ? "The FEMA service did not answer, so no flood statement is made." : "Loading FEMA flood data…");
+  y += 6; widen();
+  head("SITE DATA (APPROXIMATE, PUBLIC SOURCES)");
+  const sd = [];
+  if(t && t.status==="ok") sd.push(`Ground about ${fmt(t.min,0)} to ${fmt(t.max,0)} ft (${fmt(t.relief,0)} ft relief), average slope about ${fmt(t.meanSlope,1)}%${t.fallDir?`, falling generally ${t.fallDir}`:""}.`);
+  if(w && w.status==="ok") sd.push(w.share>0.002 ? `About ${fmt(w.share*100,1)}% mapped as NWI wetland or water. Not a delineation.` : "No NWI wetland mapped on the tract.");
+  if(wa && wa.status==="ok") sd.push(wa.crossing ? `Mapped stream or water body touches the tract${wa.names&&wa.names.length?` (${wa.names[0]})`:""}.` : "No mapped stream crosses the tract.");
+  if(so && so.status==="ok" && so.units.length) sd.push(`Main soil: ${so.units[0].name.split(",")[0]} (~${fmt(so.units[0].share*100,0)}%, hydrologic group ${so.units[0].hyd||"n/a"}).`);
+  if(pw && pw.status==="ok") sd.push(pw.nearest ? (pw.nearest.d===0 ? "A mapped transmission line crosses the tract." : `Nearest mapped transmission line about ${fmt(pw.nearest.d/5280,1)} mi.`) : `No transmission line mapped within ${s.powerMi||CONFIG.powerRadiusMi} mi.`);
+  if(j && j.status==="ok") sd.push(j.text ? j.text : j.name ? `Inside mapped city limits of ${titleCase(j.name)}. Not a zoning finding.` : "Outside mapped city limits; an ETJ may still apply.");
+  sd.forEach(x=>{ o.push(`<text x="${colX}" y="${y}" font-family="${SF}" font-size="${FS}" fill="#1a1a1a">•</text>`); para(x, 8); y += 1; widen(); });
+  // legend and abbreviations share the last band, two columns
+  y += 6; const ly0 = y; colW = 138;
+  head("LEGEND");
+  const leg = [["tract","SCREENED TRACT"],["adj","NEIGHBOR APPRAISAL PARCEL"],["flood","FEMA 1% ANNUAL-CHANCE"],["way","MAPPED FLOODWAY"],["wet","NWI WETLAND OR WATER"],["stream","MAPPED STREAM"],["major","LIDAR CONTOUR"],["power","TRANSMISSION (HIFLD)"]];
+  for(const [k,l] of leg){ if(y > SH-40) break; const sx = colX, yy = y-3;
+    o.push(k==="tract"?`<rect x="${sx}" y="${yy-4}" width="16" height="7" fill="rgba(208,49,45,.12)" stroke="#111" stroke-width="1.6"/>`:k==="adj"?`<line x1="${sx}" y1="${yy}" x2="${sx+16}" y2="${yy}" stroke="#6d6d6d" stroke-width=".8"/>`:k==="flood"?`<rect x="${sx}" y="${yy-4}" width="16" height="7" fill="url(#hFlood)" stroke="#2f6aa8" stroke-width=".8"/>`:k==="way"?`<rect x="${sx}" y="${yy-4}" width="16" height="7" fill="url(#hWay)" stroke="#173f6e" stroke-width=".8"/>`:k==="wet"?`<rect x="${sx}" y="${yy-4}" width="16" height="7" fill="url(#hWet)" stroke="#2c7a5d" stroke-width=".8"/>`:k==="stream"?`<line x1="${sx}" y1="${yy}" x2="${sx+16}" y2="${yy}" stroke="#2a86c0" stroke-width="1.6"/>`:k==="major"?`<line x1="${sx}" y1="${yy}" x2="${sx+16}" y2="${yy}" stroke="#555" stroke-width="1"/>`:`<line x1="${sx}" y1="${yy}" x2="${sx+16}" y2="${yy}" stroke="#b2600b" stroke-width="1.6" stroke-dasharray="7 2 2 2"/>`);
+    o.push(`<text x="${sx+20}" y="${y}" font-family="${SF}" font-size="6.6" fill="#1a1a1a">= ${l}</text>`); y += 9.5; }
+  y = ly0; colX = NX + 140; colW = 134;
+  head("ABBREVIATIONS");
+  for(const a of ["AC = ACRES","SQ. FT. = SQUARE FEET","NFHL = NATIONAL FLOOD HAZARD LAYER","NWI = NATIONAL WETLANDS INVENTORY","3DEP = USGS 3D ELEVATION PROGRAM","HIFLD = HOMELAND INFRASTRUCTURE FOUNDATION-LEVEL DATA","ETJ = EXTRATERRITORIAL JURISDICTION","± = APPROXIMATE"]){ if(y > SH-40) break; para(a); y += .8; }
+  const src = s.sample ? "Illustrative sample." : "Sources: TxGIO, FEMA NFHL, USFWS NWI, USDA NRCS SSURGO, USGS 3DEP, HIFLD, Esri.";
+  o.push(`<text x="${NX}" y="${SH-24}" font-family="${SF}" font-size="6.4" fill="#444">${esc(src)}</text>`);
+  o.push(`<text x="${NX}" y="${SH-14}" font-family="${SF}" font-size="6.4" fill="#444">txasc · site screen · ${esc(screenNo(s))}</text><text x="${TX-8}" y="${SH-14}" text-anchor="end" font-family="${SF}" font-size="7" fill="#111">© ADAMS SURVEYING COMPANY ${new Date().getFullYear()}</text>`);
+  return o.join("");
+}
+function titleStrip(s){
+  const o = [], cx = TX + TW/2;
+  o.push(`<line x1="${TX}" y1="5" x2="${TX}" y2="${SH-5}" stroke="#111" stroke-width="1.4"/>`);
+  o.push(`<image href="img/sheet-logo.png" x="${cx-39}" y="20" width="78" height="${(78*950/510).toFixed(1)}"/>`);
+  o.push(`<line x1="${TX}" y1="186" x2="${SW-5}" y2="186" stroke="#111" stroke-width="1.2"/>`);
+  ["1475 Richardson Drive, Suite 255","Richardson, TX 75080","Ph: (469) 317-0250","www.txasc.com","surveytx@txasc.com"].forEach((l,i)=>o.push(`<text x="${cx}" y="${202+i*10.5}" text-anchor="middle" font-family="${SF}" font-size="${i===0?6.1:7}" fill="#111">${esc(l)}</text>`));
+  o.push(`<line x1="${TX}" y1="258" x2="${SW-5}" y2="258" stroke="#111" stroke-width="1.2"/>`);
+  const tl = sheetTitleLines(s), mid = 258 + (606-258)/2;
+  o.push(`<g transform="translate(${cx} ${mid}) rotate(-90)" font-family="${SF}" text-anchor="middle" fill="#111">${tl.map((l,i)=>`<text y="${(i-(tl.length-1)/2)*14+4}" font-size="${i===0?11:10}" font-weight="${i===0?600:400}">${esc(l)}</text>`).join("")}</g>`);
+  o.push(`<line x1="${TX}" y1="606" x2="${SW-5}" y2="606" stroke="#111" stroke-width="1.2"/>`);
+  const rows = [["DRAWN BY","AUTO"],["CHECKED BY","NONE"],["DATE",mdY()]];
+  rows.forEach(([k,v],i)=>{ const yy = 606 + i*13; o.push(`<line x1="${TX}" y1="${yy+13}" x2="${SW-5}" y2="${yy+13}" stroke="#111" stroke-width=".6"/><text x="${TX+5}" y="${yy+9.5}" font-family="${SF}" font-size="6.6" fill="#111">${k}</text><text x="${SW-9}" y="${yy+9.5}" text-anchor="end" font-family="${SF}" font-size="6.6" fill="#111">${v}</text>`); });
+  o.push(`<line x1="${TX+52}" y1="606" x2="${TX+52}" y2="632" stroke="#111" stroke-width=".6"/>`);
+  o.push(`<text x="${cx}" y="666" text-anchor="middle" font-family="${SF}" font-size="12.5" font-weight="700" fill="#d0312d" letter-spacing=".5">PRELIMINARY</text>`);
+  wrapTxt("This document shall not be recorded for any purpose and shall not be used or viewed or relied upon as a final survey document.", 27).forEach((l,i)=>o.push(`<text x="${cx}" y="${677+i*7.4}" text-anchor="middle" font-family="${SF}" font-size="5.8" fill="#d0312d">${esc(l)}</text>`));
+  o.push(`<text x="${cx}" y="${724}" text-anchor="middle" font-family="${SF}" font-size="8" font-weight="700" fill="#d0312d">NOT A SURVEY</text>`);
+  o.push(`<line x1="${TX}" y1="760" x2="${SW-5}" y2="760" stroke="#111" stroke-width="1.2"/>`);
+  o.push(`<text x="${cx}" y="774" text-anchor="middle" font-family="${SF}" font-size="7.6" fill="#111">SHEET 1 OF 1</text><text x="${cx}" y="787" text-anchor="middle" font-family="${SF}" font-size="7" fill="#111">SCREEN No. ${esc(screenNo(s))}</text>`);
+  return o.join("");
+}
 
 /* ===== Terrain model (canvas, lazy) ===== */
 let MODEL = {yaw:-0.7, pitch:0.85, drag:null, raf:0, auto:true};
@@ -739,13 +806,13 @@ function renderBrief(s){
     ${refList.length?`<div class="refs"><strong>Possible record references read from the appraisal description</strong> (unverified, not a title search): ${esc(refList.join(" · "))}</div>`:""}
     <div class="b-grid">
       <div class="b-card"><h3>What a licensed survey still has to answer</h3><ul class="ticks">${still.map(x=>`<li>${x}</li>`).join("")}</ul></div>
-      <div class="b-card"><p class="eyebrow dark" style="margin-bottom:10px">The survey that fits</p>
+      <div class="b-card"><p class="eyebrow-dark">The survey that fits</p>
         <p class="rec-name">${esc(rec.pri.name)}${rec.add?` <span class="opt">then ${esc(rec.add.name.toLowerCase())}</span>`:""}</p>
         <p class="rec-why">${esc(rec.why)}</p>
         ${rec.notes.length?`<ul class="ticks">${rec.notes.map(n=>`<li>${esc(n)}</li>`).join("")}</ul>`:""}
         <p class="opt" style="margin-top:10px">A recommendation from the screen, not a requirement. Your lender, title company or engineer may ask for something different.</p></div>
       ${powerContextHTML(s)}
-      <div class="b-card navy"><h3>If you keep this site</h3><p>The boundary or ALTA, the design topography, and later the construction control and progress flights can come from one licensed Texas crew. ASC flies the site while the crew ties the boundary, on the same visit.</p><p><a href="#proposal">Request a proposal</a> or call <a href="tel:+14693170250">(469) 317-0250</a>.</p></div>
+      <div class="b-card navy"><h3>If you keep this site</h3><p>The boundary or ALTA, the design topography, and later the construction control and progress flights can come from one licensed Texas crew. ASC flies the site while the crew ties the boundary, on the same visit.</p><p><a href="#packet">Ask for a proposal with the packet</a> or call <a href="tel:+14693170250">(469) 317-0250</a>.</p></div>
     </div>`;
   // proposal context
   $("#pfSite").textContent = `${s.sample?"Sample site":"Site"}: ${s.title}, ${s.area} · ${acTxt(s.acres)} ac (approx.)`;
@@ -760,39 +827,47 @@ function renderSite(s){
   $("#resSub").innerHTML = `${s.sample?'<span class="tag sample">Illustrative sample</span>':s.sketch?'<span class="tag sketch">Sketched outline · live public data</span>':'<span class="tag live">Live public data</span>'}${esc(s.area)}${s.sample?"":" · "+s.center.lat.toFixed(5)+", "+s.center.lng.toFixed(5)}`;
   $("#layers").innerHTML = LAYERS.map(([k,l,c])=>`<button type="button" class="lyr" data-k="${k}" aria-pressed="${LAYER_ON[k]}" ${s.sample&&(k==="aerial"||k==="adj")?"disabled":""}><i style="background:${c}"></i>${l}</button>`).join("");
   $("#btnList").textContent = LIST.some(x=>x.key===listKey(s)) ? "On your short list" : "Add to short list";
-  renderReadout(s); drawSheet(s); renderBrief(s); setView(VIEW);
+  renderReadout(s); drawSheet(s); renderBrief(s); renderInsights(s); updPacketForm(); setView(VIEW);
 }
 
 /* ===== Main flow ===== */
 let RUN = 0;
 async function screen(raw, {quiet=false}={}){
-  const my = ++RUN; note(null);
-  const go = $("#go"); go.disabled = true; go.textContent = "Screening…";
+  const my = ++RUN, t0 = performance.now(); note(null);
+  const go = $("#go"), gl = go.querySelector("span"); go.disabled = true; gl.textContent = "Screening…";
+  resetMonitor(); relock();
   try {
     const sm = /^sample:(\w+)$/.exec(raw.trim());
     let s;
-    if(sm){ const d = SAMPLES.find(x=>x.id===sm[1]); if(!d) throw new Error("Unknown sample."); s = siteFromSample(d); if(!TYPE) setType(d.type, true); }
-    else s = await runLive(raw);
+    if(sm){ const d = SAMPLES.find(x=>x.id===sm[1]); if(!d) throw new Error("Unknown sample."); s = siteFromSample(d); if(!TYPE) setType(d.type, true); STEPS.forEach(([k])=>setStatus(k,"ok")); }
+    else { guide("Finding the appraisal parcel at that point…", "busy"); setStatus("parcel","wait"); s = await runLive(raw); }
     if(my !== RUN) return null;
-    current = s; renderSite(s);
+    current = s; hudCoord(s.center); if(!s.sample) setStatus("parcel","ok"); renderSite(s);
     if(!quiet) setTimeout(()=>$("#results").scrollIntoView({behavior:"smooth", block:"start"}), 80);
-    if(!s.sample){ safeReplace(null, "", shareURL(s)); await screenLayers(s); if(s === current){ renderBrief(s); renderReadout(s); } }
-    else safeReplace(null, "", location.pathname + "?" + qs({loc:raw, ...(TYPE?{type:TYPE}:{}) , stage:STAGE}));
+    if(!s.sample){
+      guide(`Parcel found: ${acTxt(s.acres)} acres${s.county?` in ${titleCase(s.county)} County`:""}. Reading seven more public layers…`, "busy");
+      safeReplace(null, "", shareURL(s)); $("#sheetWrap").classList.add("scanning");
+      await screenLayers(s); $("#sheetWrap").classList.remove("scanning");
+      if(s === current){ renderBrief(s); renderReadout(s); renderInsights(s);
+        const failed = STEPS.filter(([k])=>s.layers[k] && s.layers[k].status==="fail").length;
+        guide(`Screen complete in ${((performance.now()-t0)/1000).toFixed(0)} s.${failed?` ${failed} public service${failed>1?"s":""} didn't answer, so ${failed>1?"those layers are":"that layer is"} left off.`:""} The sheet and the read are below.`, "ok"); } }
+    else { safeReplace(null, "", location.pathname + "?" + qs({loc:raw, ...(TYPE?{type:TYPE}:{}) , stage:STAGE})); guide("Sample opened. It is illustrative, so try a real site next.", "ok"); }
     return s;
   } catch(e){
     if(my !== RUN) return null;
     // fail closed: no stale exhibit from another site stays on screen
-    current = null; $("#results").hidden = true;
-    note(e.message || "Something went wrong.");
+    current = null; $("#results").hidden = true; $("#sheetWrap").classList.remove("scanning"); resetMonitor();
+    note(e.message || "Something went wrong."); guide("Nothing was drawn for that location. Try another format, or sketch the tract.");
     if(e.sketchAt) offerSketch(e.sketchAt);
     return null;
-  } finally { if(my === RUN){ go.disabled = false; go.textContent = "Screen this site"; } }
+  } finally { if(my === RUN){ go.disabled = false; gl.textContent = "Screen this site"; } }
 }
+function relock(){ if(document.body.classList.contains("staff")) return; $("#briefWrap").classList.add("locked"); $("#reqForm").hidden = false; $("#reqDone").hidden = true; }
 function note(msg){ const n = $("#notice"); if(msg){ n.textContent = msg; n.hidden = false; } else n.hidden = true; }
 function offerSketch(center){
   const P = proj(center), half = 900, ring = [[-half,-half],[half,-half],[half,half],[-half,half]];
   const base = newSite({sample:false, sketch:true, input:"sketch", kind:"Sketch", center, P, rings:[ring.map(p=>[p[0]/50,p[1]/50])], county:null, legal:null, area:"Texas", parcels:[]});
-  base.frame = [-half,-half*700/800,half,half*700/800]; base.title = "Sketch a tract here"; base.layers = {aerial:{status:"na"}};
+  base.frame = [-half,-half*DH/DW,half,half*DH/DW]; base.title = "Sketch a tract here"; base.layers = {aerial:{status:"na"}};
   current = base; $("#results").hidden = false; renderSite(base); $("#brief").innerHTML = ""; $("#adjBox").hidden = true;
   $("#readout").innerHTML = '<li><span class="st na" aria-hidden="true"></span><div><div class="ro-k">No parcel at that point</div><div class="ro-v">Sketch the tract on the aerial</div><div class="ro-s">Click the corners on the sheet, then choose Screen this outline. Every layer runs on your outline.</div></div></li>';
   startSketch();
@@ -849,7 +924,7 @@ function shareURL(s){ const base = location.origin + location.pathname;
 
 /* ===== Short list (this browser only) ===== */
 function loadList(){ try { return JSON.parse(localStorage.getItem("ascScreenList")||"[]"); } catch(e){ return []; } }
-function saveList(){ try { localStorage.setItem("ascScreenList", JSON.stringify(LIST)); } catch(e){} renderList(); }
+function saveList(){ try { localStorage.setItem("ascScreenList", JSON.stringify(LIST)); } catch(e){} renderList(); updPacketForm(); }
 const listKey = s => s.sample ? "sample:"+s.sampleId : s.sketch ? "sketch:"+(s.sketchLL||[]).map(p=>p[1].toFixed(6)+","+p[0].toFixed(6)).join(";") : "p:"+s.parcels.map(p=>p.oid).sort().join("+");
 function summary(s){ const L = s.layers, ok = k => L[k] && L[k].status==="ok";
   return { key:listKey(s), title:s.title, area:s.area, sample:!!s.sample, acres:+s.acres.toFixed(2),
@@ -868,40 +943,36 @@ function renderList(){
   t.innerHTML = `<thead><tr><th>Site</th><th>Acres</th><th>In mapped 1% floodplain</th><th>Mapped wetland</th><th>Stream crosses</th><th>Relief / avg slope</th><th>Main soil</th><th>Nearest line</th><th>Jurisdiction</th><th></th></tr></thead><tbody>` +
     LIST.map((x,i)=>`<tr><td><a href="${esc(x.url)}">${esc(x.title)}</a><div class="opt">${esc(x.area)}${x.sample?" · sample":""}</div></td><td class="num">${acTxt(x.acres)}</td><td class="num">${v(x.flood,"%")}${x.floodway?` <span class="opt">(${x.floodway}% floodway)</span>`:""}</td><td class="num">${v(x.wet,"%")}</td><td>${x.stream==null?v(null):x.stream?"Yes":"No"}</td><td class="num">${x.relief==null?v(null):`${x.relief} ft / ${x.slope}%`}</td><td>${v(x.soil)}</td><td class="num">${x.line==null?v(null):`${esc(x.line)} mi${x.kv?` · ${x.kv} kV`:""}`}</td><td>${v(x.juris)}</td><td><button type="button" data-rm="${i}">Remove</button></td></tr>`).join("") + `</tbody>`;
 }
-function listCSV(){
-  const cols = ["title","area","acres","flood","floodway","wet","stream","relief","slope","soil","line","kv","juris","date","url"];
-  const head = ["Site","Area","Acres (GIS approx)","% in mapped 1% floodplain (approx)","% floodway (approx)","% mapped wetland (approx)","Mapped stream crosses","Relief ft (approx)","Avg slope % (approx)","Main soil","Nearest mapped transmission line mi","kV class","Jurisdiction","Screened","Link"];
-  const q = v => '"' + String(v==null?"":v).replace(/"/g,'""') + '"';
-  const body = LIST.map(x=>cols.map(c=>q(x[c])).join(",")).join("\n");
-  const note = q("Preliminary public-record screen by Adams Surveying Company. Not a survey. All figures approximate. Not for conveyance, design or construction.");
-  const blob = new Blob([head.map(q).join(",")+"\n"+body+"\n\n"+note+"\n"], {type:"text/csv"});
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "asc-site-screen-shortlist.csv"; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
-}
-
-/* ===== Proposal request ===== */
+/* ===== Packet request (the gate: contact details in, packet by email) ===== */
+function updPacketForm(){ const n = LIST.length; $("#listOpt").hidden = !n; $("#listN").textContent = n; $("#pkListItem").hidden = !n; }
+function unlockBrief(){ $("#briefWrap").classList.remove("locked"); }
 async function submitRequest(e){
   e.preventDefault(); const f = e.target, err = $("#reqErr"); err.hidden = true;
   const d = Object.fromEntries(new FormData(f).entries());
-  if(!d.role || !d.timing || !d.name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(d.email||"")){ err.textContent = "Please add your role, timing, name and a valid email. Phone is optional."; err.hidden = false; return; }
+  if(!d.name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(d.email||"") || !d.role || !d.timing){ err.textContent = "Please add your name, a valid email, your role and timing. Company and phone are optional."; err.hidden = false; return; }
   const s = current, rec = s ? recommend(s) : null, L = s ? s.layers : {};
-  const clip = (v,n) => v == null ? null : String(v).slice(0,n);
-  const row = { kind:"request", goal:"screen:"+STAGE, site_type:TYPE || (s&&s.sample?s.type:null), survey: rec ? (rec.pri===SURVEYS.none ? (rec.add?rec.add.key:"unsure") : rec.pri.key) : null,
-    location: clip(s ? (s.sample ? "sample:"+s.sampleId : s.sketch ? "sketch:"+s.sketchLL.map(p=>p[1].toFixed(6)+","+p[0].toFixed(6)).join(";") : (s.situs || s.input)) + (d.note ? " | Note: "+d.note.slice(0,800) : "") : (d.note||null), 400),
-    lat: s ? +s.center.lat.toFixed(6) : null, lng: s ? +s.center.lng.toFixed(6) : null, acres: s ? +s.acres.toFixed(2) : null,
+  const clip = (v,n) => v == null || v === "" ? null : String(v).slice(0,n);
+  const siteRef = s ? (s.sample ? "sample:"+s.sampleId : s.sketch ? "sketch:"+s.sketchLL.map(p=>p[1].toFixed(6)+","+p[0].toFixed(6)).join(";") : (s.situs || s.input)) : null;
+  const list = d.withList && LIST.length ? LIST.slice(-30).map(x=>({title:String(x.title).slice(0,120), url:String(x.url).slice(0,600), acres:x.acres})) : [];
+  const packet = { v:1, link: s ? shareURL(s).slice(0,1500) : null, screen_no: s ? screenNo(s) : null, title: s ? String(s.title).slice(0,160) : null, stage:STAGE, type:TYPE, list };
+  const row = { kind:"request", goal:(d.proposal?"packet+proposal:":"packet:")+STAGE, site_type:TYPE || (s&&s.sample?s.type:null), survey: rec ? (rec.pri===SURVEYS.none ? (rec.add?rec.add.key:"unsure") : rec.pri.key) : null,
+    location: clip(siteRef, 400), lat: s ? +s.center.lat.toFixed(6) : null, lng: s ? +s.center.lng.toFixed(6) : null, acres: s ? +s.acres.toFixed(2) : null,
     flood_zones: L.flood && L.flood.status==="ok" ? clip(L.flood.zonesOnTract.join(", ") || "X", 200) : null, pct_outside_floodplain: L.flood && L.flood.status==="ok" ? +((1-L.flood.shareSFHA)*100).toFixed(1) : null,
     county: s ? clip(s.county,80) : null, legal: s ? clip(s.legal,1000) : null, prop_id: s ? clip(s.propId,80) : null, is_sample: !!(s && s.sample),
-    name: d.name.slice(0,200), email: d.email.slice(0,320), phone: (d.phone||"").slice(0,40) || null, role: clip(d.role,60), timing: clip(d.timing,60), under_contract: clip(d.contract,60) || null, wants_records: !!d.records };
+    name: d.name.slice(0,200), email: d.email.slice(0,320), phone: clip(d.phone,40), company: clip(d.company,200), note: clip(d.note,1000),
+    role: clip(d.role,60), timing: clip(d.timing,60), wants_records: !!d.records, wants_proposal: !!d.proposal, packet };
   const dry = /[?&]dry=1/.test(location.search) || /^TEST\b/i.test(d.name);
   const btn = f.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "Sending…";
   try {
     if(!dry){
       const r = await fetch(CONFIG.store.url + "/rest/v1/" + CONFIG.store.table, {method:"POST", headers:{"Content-Type":"application/json", apikey:CONFIG.store.key, Authorization:"Bearer "+CONFIG.store.key, Prefer:"return=minimal"}, body:JSON.stringify(row)});
       if(!r.ok) throw new Error("HTTP "+r.status);
-    } else await sleep(400);
-    f.hidden = true; $("#reqDone").hidden = false; $("#reqDone").focus();
+    } else await sleep(500);
+    f.hidden = true; $("#doneEmail").textContent = d.email; $("#doneH").textContent = s ? `The packet for ${s.title} is on the way.` : "Your request is in.";
+    $("#reqDone").hidden = false; $("#reqDone").focus(); unlockBrief(); toast(dry ? "Test mode: nothing was sent." : "Packet requested.");
   } catch(ex){
-    err.innerHTML = `The request didn't go through. Please email <a href="mailto:surveytx@txasc.com?subject=${encodeURIComponent("Proposal request: "+(s?s.title:"site"))}&body=${encodeURIComponent((s?shareURL(s)+"\n\n":"")+(d.note||""))}">surveytx@txasc.com</a> or call (469) 317-0250.`; err.hidden = false;
-  } finally { btn.disabled = false; btn.textContent = "Request a proposal"; }
+    err.innerHTML = `The request didn't go through. Please email <a href="mailto:surveytx@txasc.com?subject=${encodeURIComponent("Site Screen packet: "+(s?s.title:"site"))}&body=${encodeURIComponent((s?shareURL(s)+"\n\n":"")+(d.note||""))}">surveytx@txasc.com</a> or call (469) 317-0250.`; err.hidden = false;
+  } finally { btn.disabled = false; btn.textContent = "Email me the packet"; }
 }
 
 /* ===== Bulk ===== */
@@ -925,6 +996,90 @@ function setView(v){ VIEW = v; $("#tabSheet").setAttribute("aria-selected", Stri
 function setType(k, silent){ TYPE = TYPE===k && !silent ? null : k; document.querySelectorAll("#types .chip").forEach(c=>c.setAttribute("aria-pressed", String(c.dataset.k===TYPE))); if(current && !silent) renderBrief(current); }
 function setStage(k){ STAGE = k; document.querySelectorAll("#stages .chip").forEach(c=>c.setAttribute("aria-pressed", String(c.dataset.k===STAGE))); if(current) renderBrief(current); }
 
+/* ===== Live layer monitor, guide line and insights ===== */
+const MON_SRC = {parcel:"TxGIO",flood:"FEMA NFHL",wet:"USFWS NWI",water:"USGS NHD",soils:"NRCS SSURGO",terrain:"USGS 3DEP",power:"HIFLD",juris:"TxGIO"};
+const MON_T = {};
+function renderMonitor(){ $("#monList").innerHTML = STEPS.map(([k,l])=>`<li data-k="${k}"><span class="st idle" aria-hidden="true"></span><span>${esc(l)}<br><span class="src">${MON_SRC[k]}</span></span><span class="ms">standby</span></li>`).join(""); }
+function setStatus(key, st){
+  const li = document.querySelector(`#monList li[data-k="${key}"]`); if(!li) return;
+  if(st==="wait") MON_T[key] = performance.now();
+  const map = {wait:"wait", ok:"ok", fail:"na", na:"off"}, cls = map[st] || "idle";
+  li.className = st==="ok" ? "ok" : st==="fail" ? "fail" : "";
+  li.querySelector(".st").className = "st " + cls;
+  li.querySelector(".ms").textContent = st==="wait" ? "reading" : st==="ok" ? ((performance.now()-(MON_T[key]||performance.now()))/1000).toFixed(1)+" s" : st==="fail" ? "no answer" : st==="na" ? "n/a" : "standby";
+  const busy = document.querySelectorAll("#monList .st.wait").length, ms = $("#monState");
+  ms.textContent = busy ? `Reading ${busy} layer${busy>1?"s":""}` : current ? "Screen complete" : "Standing by"; ms.classList.toggle("run", !!busy);
+  const pl = $("#panelLive"); if(pl) pl.textContent = busy ? `Reading ${busy}` : "Live";
+}
+function resetMonitor(){ STEPS.forEach(([k])=>setStatus(k,"idle")); }
+let GUIDE_T = 0;
+function guide(msg, cls){ const g = $("#guide"); if(!g) return; clearInterval(GUIDE_T); g.className = "guide" + (cls?" "+cls:"");
+  if(matchMedia("(prefers-reduced-motion: reduce)").matches || msg.includes("<")){ g.innerHTML = msg; return; }
+  let i = 0; g.textContent = ""; GUIDE_T = setInterval(()=>{ i += 2; g.innerHTML = esc(msg.slice(0,i)) + (i < msg.length ? '<span class="caret"></span>' : ""); if(i >= msg.length) clearInterval(GUIDE_T); }, 14); }
+function guessKind(v){ v = v.trim(); if(!v) return null;
+  if(/^-?\d{1,2}\.\d+\s*,\s*-?\d{2,3}\.\d+$/.test(v)) return "Coordinates recognized. Press Enter to screen that point.";
+  if(/[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{0,3}/i.test(v)) return "Plus code recognized. Press Enter to screen it.";
+  if(/^https?:\/\//i.test(v)) return /@-?\d|[?&](q|ll)=-?\d|!3d/.test(v) ? "Map link recognized. The screen reads the pin from it." : "If that link carries a pin, the screen reads it. Coordinates work best.";
+  if(/\d/.test(v) && v.length > 8) return "Looks like an address. The screen finds the parcel at that address.";
+  if(v.length > 3) return "Add a street number or city, or paste coordinates, for the best match.";
+  return null; }
+function hudCoord(c){ const h = $("#hudCoord"); if(h && c) h.textContent = `Lat ${c.lat.toFixed(5)} · Lng ${c.lng.toFixed(5)}`; }
+function floodSide(s){ const f = s.layers.flood; if(!f || f.status!=="ok" || f.shareSFHA <= 0.005) return null;
+  const sf = f.polys.filter(p=>p.sfha), [x0,y0,x1,y1] = bbox(s.rings), n = 40; let sx=0, sy=0, k=0;
+  for(let i=0;i<n;i++) for(let j=0;j<n;j++){ const x = x0+(i+.5)*(x1-x0)/n, y = y0+(j+.5)*(y1-y0)/n; if(inRings(x,y,s.rings) && sf.some(p=>inRings(x,y,p.rings))){ sx+=x; sy+=y; k++; } }
+  if(!k || f.shareSFHA > 0.8) return null; const [cx,cy] = centroid(s.rings); const dx = sx/k-cx, dy = sy/k-cy;
+  return Math.hypot(dx,dy) < Math.sqrt(s.areaSqft)*0.12 ? null : compass(dx,dy); }
+function insights(s){
+  const L = s.layers, out = [], ok = k => L[k] && L[k].status==="ok", type = TYPE || (s.sample ? s.type : null);
+  if(ok("flood")){ const f = L.flood, side = floodSide(s);
+    out.push(f.shareSFHA > 0.005 ? {c:"#5ab0ff", h:"Floodplain", p:`About ${fmt(f.shareSFHA*100,0)}% of the tract sits in FEMA's mapped 1% annual-chance floodplain${side?`, mostly on the ${side} side`:""}. Lenders and engineers will ask where that line falls on the ground, which only a survey tied to the base flood elevation can show.`}
+      : {c:"#43c28a", h:"Floodplain", p:"Outside FEMA's mapped 1% annual-chance floodplain, based on an aligned map overlay. That is a map reading, not an elevation survey."}); }
+  else out.push({wait:true, h:"Floodplain", p:"Reading FEMA's flood map…"});
+  if(ok("terrain")){ const t = L.terrain;
+    out.push({c:"#e0a33b", h:"Ground", p:`About ${fmt(t.relief,0)} ft of relief${t.fallDir?`, falling generally toward the ${t.fallDir}`:""}, with an average slope near ${fmt(t.meanSlope,1)}%. ${t.relief >= 15 ? "Grading will be a real cost line here, so design topography matters early." : t.meanSlope < 2 ? "Mostly gentle ground; drainage direction will shape the layout more than grading will." : "Moderate ground. Design topography settles pads and drainage."}`}); }
+  else if(!L.terrain || L.terrain.status==="wait") out.push({wait:true, h:"Ground", p:"Reading public lidar…"});
+  const wetOn = ok("wet") && L.wet.share > 0.002, strOn = ok("water") && L.water.crossing;
+  if(wetOn || strOn) out.push({c:"#5fd3a8", h:"Water features", p:`${wetOn?`About ${fmt(L.wet.share*100,1)}% of the tract is mapped as wetland or water`:""}${wetOn&&strOn?", and a":strOn?"A":""}${strOn?` mapped stream touches the tract${L.water.names&&L.water.names.length?` (${L.water.names[0]})`:""}`:""}. An environmental consultant decides whether a delineation is needed; a survey then locates the limits.`});
+  const r = s.refs || {};
+  if(!s.sample && !s.sketch){ if(r.lot && r.block) out.push({c:"#ff6a5e", h:"Record", p:`Reads as a platted lot: Lot ${r.lot}, Block ${r.block}${r.addition?`, ${titleCase(r.addition)}`:""}. The recorded plat is where the boundary work starts.`});
+    else if(r.abstract) out.push({c:"#ff6a5e", h:"Record", p:`Reads as unplatted acreage in Abstract ${r.abstract}. Lines come from deed calls, so plan for more record research and corner recovery than on a platted lot.`});
+    if(s.added.length) out.push({c:"#ff6a5e", h:"Assemblage", p:`${s.parcels.length} appraisal parcels combined. The common lines, and any gaps or overlaps between the deeds, are what a boundary survey resolves.`}); }
+  if(ok("power") && (type==="dc" || type==="ind" || s.acres >= 40)){ const n = L.power.nearest;
+    out.push({c:"#f0b35a", h:"Transmission", p:`${n ? (n.d===0 ? "A mapped transmission line crosses the tract" : `The nearest mapped transmission line is about ${fmt(n.d/5280,1)} mi away`) + (n.kv?` (${fmt(n.kv,0)} kV class)`:"") : `No transmission line is mapped within ${s.powerMi||CONFIG.powerRadiusMi} mi`}. Proximity only; capacity is a utility and ERCOT question.`}); }
+  return out.slice(0,4);
+}
+function renderInsights(s){
+  const box = $("#insights"); if(!box || !s) return;
+  const list = insights(s), have = [...box.children];
+  list.forEach((x,i)=>{ const html = `<b>${esc(x.h)}</b><p>${esc(x.p)}</p>`, el = have[i];
+    const key = x.h + (x.wait?":w:":":") + x.p;
+    if(el && el.dataset.h === key) return;
+    const d = document.createElement("div"); d.className = "ins" + (x.wait?" wait":""); d.dataset.h = key; if(x.c) d.style.setProperty("--c", x.c); d.style.animationDelay = (i*90)+"ms"; d.innerHTML = html;
+    if(el) box.replaceChild(d, el); else box.appendChild(d); });
+  while(box.children.length > list.length) box.lastChild.remove();
+}
+/* hero contours: a generated terrain, drawn in once */
+function heroTopo(){
+  const svg = $("#heroTopo"); if(!svg) return; const W = 1600, H = 900, nx = 96, ny = 54; svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const F = (x,y)=> 60*Math.sin(x/260+.6)*Math.cos(y/210) + 38*Math.sin((x+y)/170) + 26*Math.cos(x/90 - y/140) + 0.09*x - 0.05*y;
+  const g = {nx, ny, x0:0, ytop:H, dx:W/nx, dy:H/ny, z:new Float32Array(nx*ny)};
+  for(let j=0;j<ny;j++) for(let i=0;i<nx;i++) g.z[j*nx+i] = F((i+.5)*g.dx, H-(j+.5)*g.dy);
+  const segs = contourSegs(g, 14), by = {};
+  for(const s of segs){ (by[s[4]] = by[s[4]] || []).push(`M${s[0].toFixed(0)} ${(H-s[1]).toFixed(0)}L${s[2].toFixed(0)} ${(H-s[3]).toFixed(0)}`); }
+  svg.innerHTML = Object.entries(by).map(([lv,d],i)=>`<path class="${Math.round(lv/14)%5===0?"maj ":""}draw" style="animation-delay:${(i%12)*120}ms" d="${d.join("")}"/>`).join("");
+  svg.querySelectorAll("path").forEach(p=>{ try { p.style.setProperty("--len", Math.ceil(p.getTotalLength())); } catch(e){} });
+}
+/* cursor readout on the sheet */
+function sheetHover(e){
+  const hud = $("#cursorHud"), s = current; if(!s) return;
+  const [px,py] = svgPoint(e); if(px<DX||px>DX+DW||py<DY||py>DY+DH){ hud.hidden = true; return; }
+  const [x,y] = sheetXform(s).inv(px,py), ll = s.P.i([x,y]), t = s.layers.terrain, f = s.layers.flood;
+  const z = t && t.status==="ok" ? gridAt(t.grid, x, y) : NaN;
+  const inFlood = f && f.status==="ok" && f.polys.some(p=>p.sfha && inRings(x,y,p.rings));
+  hud.innerHTML = `<b>${s.sample?"sample":ll[1].toFixed(5)+", "+ll[0].toFixed(5)}</b>${isFinite(z)?` · ~${fmt(z,0)} ft (lidar)`:""}${inFlood?" · mapped 1% floodplain":""}${inRings(x,y,s.rings)?" · on tract":""}`;
+  const r = $("#sheetWrap").getBoundingClientRect(); hud.style.left = (e.clientX-r.left)+"px"; hud.style.top = (e.clientY-r.top)+"px"; hud.hidden = false;
+}
+
 /* ===== Wire up ===== */
 function init(){
   $("#types").innerHTML = TYPES.map(([k,l])=>`<button type="button" class="chip" data-k="${k}" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true">${ICON[k]}</svg>${l}</button>`).join("");
@@ -938,11 +1093,8 @@ function init(){
   $("#bulkGo").addEventListener("click", runBulk);
   $("#layers").addEventListener("click", e=>{ const b = e.target.closest(".lyr"); if(!b) return; const k = b.dataset.k; LAYER_ON[k] = !LAYER_ON[k]; b.setAttribute("aria-pressed", String(LAYER_ON[k])); drawSheet(current); });
   $("#tabSheet").addEventListener("click", ()=>setView("sheet")); $("#tabModel").addEventListener("click", ()=>setView("model"));
-  $("#btnPrint").addEventListener("click", ()=>{ document.body.classList.remove("print-list"); setView("sheet"); setTimeout(()=>window.print(), 50); });
-  $("#slPrint").addEventListener("click", ()=>{ document.body.classList.add("print-list"); window.print(); setTimeout(()=>document.body.classList.remove("print-list"), 500); });
   $("#btnShare").addEventListener("click", async ()=>{ if(!current) return; const u = shareURL(current); try { await navigator.clipboard.writeText(u); toast("Link copied. It re-runs the screen with today's public data."); } catch(e){ prompt("Copy this link", u); } });
   $("#btnList").addEventListener("click", addCurrentToList);
-  $("#slCsv").addEventListener("click", ()=>{ if(LIST.length) listCSV(); });
   $("#slClear").addEventListener("click", ()=>{ LIST = []; saveList(); if(current) $("#btnList").textContent = "Add to short list"; });
   $("#slTable").addEventListener("click", e=>{ const b = e.target.closest("[data-rm]"); if(b){ LIST.splice(+b.dataset.rm,1); saveList(); } });
   $("#btnSketch").addEventListener("click", ()=>{ if(SKETCH) endSketch(); else startSketch(); });
@@ -955,7 +1107,12 @@ function init(){
   });
   $("#reqForm").addEventListener("submit", submitRequest);
   $("#again").addEventListener("click", ()=>{ $("#reqForm").reset(); $("#reqForm").hidden = false; $("#reqDone").hidden = true; $("#loc").focus(); window.scrollTo({top:0, behavior:"smooth"}); });
-  initModelInput(); renderList();
+  initModelInput(); renderList(); renderMonitor(); heroTopo();
+  const staff = /[?&]staff=1/.test(location.search); if(staff){ document.body.classList.add("staff"); unlockBrief(); }
+  $("#loc").addEventListener("input", e=>{ const m = guessKind(e.target.value); if(m) guide(m); });
+  $("#sheet").addEventListener("mousemove", sheetHover); $("#sheet").addEventListener("mouseleave", ()=>{ $("#cursorHud").hidden = true; });
+  $("#sheetWrap").addEventListener("contextmenu", e=>{ if(!staff) e.preventDefault(); });
+  const hdr = $("#hdr"), onScroll = ()=>hdr.classList.toggle("is-scrolled", scrollY > 40); addEventListener("scroll", onScroll, {passive:true}); onScroll();
   // deep links: ?loc=…&type=…&stage=…  or ?sketch=lat,lng;…
   const u = new URLSearchParams(location.search);
   if(u.get("type") && ICON[u.get("type")]) setType(u.get("type"), true);

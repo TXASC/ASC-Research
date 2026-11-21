@@ -13,8 +13,9 @@ This repository holds **only the static page**:
 
 ## Site Screen preview (`/screen/`)
 
-A free, preliminary public-record screen for Texas land: appraisal parcel and neighbors, FEMA floodplain, NWI wetlands, mapped streams, SSURGO soils, USGS 3DEP terrain, HIFLD transmission proximity and city limits, drawn on one disclaimed sheet with a terrain model, a printable brief, a short list, bulk paste and a proposal request.
+A free, preliminary public-record screen for Texas land: appraisal parcel and neighbors, FEMA floodplain, NWI wetlands, mapped streams, SSURGO soils, USGS 3DEP terrain, HIFLD transmission proximity and city limits, drawn on ASC's 24x36 sheet template (title strip, vicinity map, notes, flood statement, legend) with a terrain model, plain-language insights, a short list and bulk paste. Styled after the "Copy of TXASC" staging site.
 
 - Static files only (`screen/index.html`, `screen.css`, `screen.js`, `img/`). Every lookup goes from the visitor's browser to the public service.
-- Proposal requests insert into `snapshot_requests` (kind `request`, goal `screen:<stage>`). The anonymous role can insert but cannot read rows.
-- `noindex,nofollow` until an ASC-domain launch is approved. Add `?dry=1` (or start the name with `TEST`) to walk the proposal flow without writing a row.
+- Nothing downloads or prints from the public page. The full packet is requested with contact details and emailed by ASC. Requests insert into `snapshot_requests` (kind `request`, goal `packet:<stage>` or `packet+proposal:<stage>`, plus `company`, `note`, `wants_proposal` and a `packet` JSON with the share link and short list). `packet_status` defaults to `pending`. The anonymous role can insert but cannot read rows.
+- Staff: open the share link from a request with `&staff=1` to unlock the brief and print the packet (11x17 landscape, sheet then brief). This is a front-end switch, not security; automatic sending needs a server-side function.
+- `noindex,nofollow` until an ASC-domain launch is approved. Add `?dry=1` (or start the name with `TEST`) to walk the packet request without writing a row.
