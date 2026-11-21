@@ -1128,8 +1128,11 @@ function insMedia(th){
   const m = document.createElement("div"); m.className = "ins-media"; m.setAttribute("aria-hidden","true");
   m.innerHTML = `<div class="ins-motif m-${th}"></div>`;
   const src = INS_CLIP[th], still = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if(src && !still){ const v = document.createElement("video"); v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true; v.preload = "metadata"; v.setAttribute("muted",""); v.setAttribute("playsinline","");
-    v.addEventListener("error", ()=>v.remove()); v.addEventListener("playing", ()=>m.classList.add("has-clip"), {once:true}); v.src = src; m.prepend(v); }
+  if(src){ const v = document.createElement("video"); v.muted = true; v.playsInline = true; v.setAttribute("muted",""); v.setAttribute("playsinline","");
+    v.addEventListener("error", ()=>v.remove());
+    if(still){ v.preload = "auto"; v.addEventListener("loadeddata", ()=>{ v.currentTime = Math.min(1.5, (v.duration||2)/2); }, {once:true}); v.addEventListener("seeked", ()=>m.classList.add("has-clip"), {once:true}); }
+    else { v.loop = true; v.autoplay = true; v.preload = "metadata"; v.addEventListener("playing", ()=>m.classList.add("has-clip"), {once:true}); }
+    v.src = src; m.prepend(v); }
   return m; }
 function renderInsights(s){
   const box = $("#insights"); if(!box || !s) return;
