@@ -1052,8 +1052,9 @@ function renderInsights(s){
   const box = $("#insights"); if(!box || !s) return;
   const list = insights(s), have = [...box.children];
   list.forEach((x,i)=>{ const html = `<b>${esc(x.h)}</b><p>${esc(x.p)}</p>`, el = have[i];
-    if(el && el.dataset.h === x.h + (x.wait?":w":"") ) return;
-    const d = document.createElement("div"); d.className = "ins" + (x.wait?" wait":""); d.dataset.h = x.h + (x.wait?":w":""); if(x.c) d.style.setProperty("--c", x.c); d.style.animationDelay = (i*90)+"ms"; d.innerHTML = html;
+    const key = x.h + (x.wait?":w:":":") + x.p;
+    if(el && el.dataset.h === key) return;
+    const d = document.createElement("div"); d.className = "ins" + (x.wait?" wait":""); d.dataset.h = key; if(x.c) d.style.setProperty("--c", x.c); d.style.animationDelay = (i*90)+"ms"; d.innerHTML = html;
     if(el) box.replaceChild(d, el); else box.appendChild(d); });
   while(box.children.length > list.length) box.lastChild.remove();
 }
