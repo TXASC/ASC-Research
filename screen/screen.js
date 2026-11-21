@@ -879,6 +879,7 @@ function offerSketch(center){
   const base = newSite({sample:false, sketch:true, input:"sketch", kind:"Sketch", center, P, rings:[ring.map(p=>[p[0]/50,p[1]/50])], county:null, legal:null, area:"Texas", parcels:[]});
   base.frame = [-half,-half*DH/DW,half,half*DH/DW]; base.title = "Sketch a tract here"; base.layers = {aerial:{status:"na"}};
   current = base; $("#results").hidden = false; renderSite(base); $("#brief").innerHTML = ""; $("#adjBox").hidden = true;
+  $("#insights").innerHTML = ""; $("#wfState").textContent = "Waiting on your outline";
   $("#readout").innerHTML = '<li><span class="st na" aria-hidden="true"></span><div><div class="ro-k">No parcel at that point</div><div class="ro-v">Sketch the tract on the aerial</div><div class="ro-s">Click the corners on the sheet, then choose Screen this outline. Every layer runs on your outline.</div></div></li>';
   startSketch();
   $("#results").scrollIntoView({behavior:"smooth"});
@@ -1135,7 +1136,7 @@ function insMedia(th){
     v.src = src; m.prepend(v); }
   return m; }
 function renderInsights(s){
-  const box = $("#insights"); if(!box || !s) return;
+  const box = $("#insights"); if(!box || !s) return; if(s.layers && !s.layers.flood && s.sketch){ box.innerHTML = ""; return; }
   const list = insights(s), have = [...box.children];
   list.forEach((x,i)=>{ const el = have[i], key = x.h + (x.wait?":w:":":") + x.p, th = INS_THEME[x.h] || "record";
     if(el && el.dataset.h === key) return;
