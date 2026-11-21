@@ -316,7 +316,7 @@ const SAMPLES = [
     terrain:(x,y)=>wave(x,y,512,-0.0035,0.0052,6) - Math.exp(-Math.pow((x-680)/260,2))*9,
     soils:[{sym:"HoB",name:"Houston Black clay, 1 to 3 percent slopes",share:.46,hyd:"D",drain:"Moderately well drained"},{sym:"AuC",name:"Austin silty clay, 3 to 5 percent slopes",share:.31,hyd:"C",drain:"Well drained"},{sym:"Tr",name:"Trinity clay, frequently flooded",share:.14,hyd:"D",drain:"Somewhat poorly drained"},{sym:"EdD",name:"Eddy gravelly clay loam, 3 to 8 percent slopes",share:.09,hyd:"D",drain:"Well drained"}],
     lines:[{kv:345, pathsFt:[[[-9000,2900],[-2000,2650],[3000,2500],[9000,2300]]]},{kv:138, pathsFt:[[[-3600,-9000],[-3300,-2600],[-3100,3000],[-2900,9000]]]}], city:"Outside mapped city limits" },
-  { id:"retail", label:"Retail pad", area:"Collin County", type:"retail", county:"COLLIN", legal:"ASHLEY COMMONS ADDN BLK A LOT 3 INT 2021-0098214", src:"Sample",
+  { id:"retail", label:"Retail pad", area:"Collin County", type:"retail", county:"COLLIN", legal:"COMMERCIAL ADDN BLK A LOT 3 INT 2021-0098214", src:"Sample",
     ring:[[-280,-240],[280,-240],[280,242],[-280,242]],
     flood:[], wet:[], streams:[],
     terrain:(x,y)=>wave(x,y,640,0.006,0.0025,0.8),
@@ -690,7 +690,7 @@ function recommend(s){
   if(L.terrain && L.terrain.status==="ok" && L.terrain.relief >= 15) notes.push(`About ${fmt(L.terrain.relief,0)} ft of relief means grading drives cost here, so design topography matters early.`);
   if(s.refs && s.refs.abstract && !s.refs.platted) notes.push("The appraisal record reads as unplatted abstract land. Boundaries come from deed calls, so plan for more record research and corner recovery than on a platted lot.");
   if(s.added.length) notes.push(`This is an assemblage of ${s.parcels.length} appraisal parcels. The common lines between them, and any gaps or overlaps in the deeds, are what a boundary survey resolves.`);
-  if(big) notes.push("On a tract this size, flying the site while the crew ties the boundary puts the topography, the boundary and later construction control on one set of control points from one visit.");
+  if(big) notes.push("On a tract this size, flying the site while the crew ties the boundary puts the topography, the boundary and later construction layout on one consistent survey basis, from one visit.");
   return {pri, add, why, notes};
 }
 function powerContextHTML(s){
@@ -699,7 +699,7 @@ function powerContextHTML(s){
   const near = pw.nearest;
   return `<div class="b-card power"><h3>Power context, from public maps</h3>
     <p>${near ? (near.d===0 ? "A mapped transmission line crosses this tract" : `The nearest mapped transmission line is about ${fmt(near.d/5280,1)} miles away`) + (near.kv?` (${fmt(near.kv,0)} kV class)`:"") + "." : `No transmission line is mapped within ${s.powerMi||CONFIG.powerRadiusMi} miles.`} ${pw.count>1?`${pw.count} mapped lines fall within ${s.powerMi||CONFIG.powerRadiusMi} miles${pw.kvs.length?`, ${pw.kvs.map(k=>fmt(k,0)+" kV").join(", ")} classes`:""}.`:""}</p>
-    <p>A nearby line is not capacity. Whether a load can be served, when, and at what cost is answered by the transmission provider and ERCOT through the large-load process, not by a map. For loads of 75 MW or more, PUCT rules require a study fee and financial security before a request is studied.</p>
+    <p>A nearby line is not capacity. Whether the grid can take a new load, when, and at what cost is answered by the transmission provider and ERCOT through the large-load interconnection process, not by a map. For large loads, PUCT rules require a study fee and financial security before a request is studied.</p>
     <p><a href="${CONFIG.ercotPlanning}" target="_blank" rel="noopener">ERCOT regional planning filings</a> &middot; <a href="${CONFIG.puctLargeLoad}" target="_blank" rel="noopener">PUCT large-load rule (16 TAC §25.194)</a></p>
     ${pw.nearest && pw.nearest.d < 300 ? "<p>A line this close usually means a recorded transmission easement on or next to the tract. Its width and restrictions come from the recorded instrument, located by survey.</p>" : ""}</div>`;
 }
@@ -867,12 +867,13 @@ async function submitRequest(e){
   const d = Object.fromEntries(new FormData(f).entries());
   if(!d.role || !d.timing || !d.name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(d.email||"")){ err.textContent = "Please add your role, timing, name and a valid email. Phone is optional."; err.hidden = false; return; }
   const s = current, rec = s ? recommend(s) : null, L = s ? s.layers : {};
-  const row = { kind:"screen_proposal", goal:STAGE, site_type:TYPE || (s&&s.sample?s.type:null), survey: rec ? (rec.pri===SURVEYS.none ? (rec.add?rec.add.key:"unsure") : rec.pri.key) : null,
-    location: s ? (s.sample ? "sample:"+s.sampleId : s.sketch ? "sketch:"+s.sketchLL.map(p=>p[1].toFixed(6)+","+p[0].toFixed(6)).join(";") : (s.situs || s.input)) + (d.note ? " | Note: "+d.note.slice(0,800) : "") : (d.note||null),
+  const clip = (v,n) => v == null ? null : String(v).slice(0,n);
+  const row = { kind:"request", goal:"screen:"+STAGE, site_type:TYPE || (s&&s.sample?s.type:null), survey: rec ? (rec.pri===SURVEYS.none ? (rec.add?rec.add.key:"unsure") : rec.pri.key) : null,
+    location: clip(s ? (s.sample ? "sample:"+s.sampleId : s.sketch ? "sketch:"+s.sketchLL.map(p=>p[1].toFixed(6)+","+p[0].toFixed(6)).join(";") : (s.situs || s.input)) + (d.note ? " | Note: "+d.note.slice(0,800) : "") : (d.note||null), 400),
     lat: s ? +s.center.lat.toFixed(6) : null, lng: s ? +s.center.lng.toFixed(6) : null, acres: s ? +s.acres.toFixed(2) : null,
-    flood_zones: L.flood && L.flood.status==="ok" ? (L.flood.zonesOnTract.join(", ") || "X") : null, pct_outside_floodplain: L.flood && L.flood.status==="ok" ? +((1-L.flood.shareSFHA)*100).toFixed(1) : null,
-    county: s ? s.county : null, legal: s ? s.legal : null, prop_id: s ? s.propId : null, is_sample: !!(s && s.sample),
-    name: d.name.slice(0,200), email: d.email.slice(0,200), phone: (d.phone||"").slice(0,40) || null, role: d.role, timing: d.timing, under_contract: d.contract || null, wants_records: !!d.records };
+    flood_zones: L.flood && L.flood.status==="ok" ? clip(L.flood.zonesOnTract.join(", ") || "X", 200) : null, pct_outside_floodplain: L.flood && L.flood.status==="ok" ? +((1-L.flood.shareSFHA)*100).toFixed(1) : null,
+    county: s ? clip(s.county,80) : null, legal: s ? clip(s.legal,1000) : null, prop_id: s ? clip(s.propId,80) : null, is_sample: !!(s && s.sample),
+    name: d.name.slice(0,200), email: d.email.slice(0,320), phone: (d.phone||"").slice(0,40) || null, role: clip(d.role,60), timing: clip(d.timing,60), under_contract: clip(d.contract,60) || null, wants_records: !!d.records };
   const dry = /[?&]dry=1/.test(location.search) || /^TEST\b/i.test(d.name);
   const btn = f.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "Sending…";
   try {

@@ -228,10 +228,29 @@ code{font-family:var(--mono);font-size:.9em}
   @page{size:letter landscape;margin:.45in .45in .6in}
   body{background:#fff;font-size:11pt}
   .hdr,.hero,.explain,.proposal,.foot,.res-actions,.viewbar,.layers,.sketchbar,.panel,.toast,.skip,.model-wrap,.sl-actions,.sl-note,.sl-empty{display:none!important}
-  .results{padding:0}
+  .results{padding:0;background:#fff}
+  .res-head{margin:0 0 6pt;display:block}
+  .res-head h2{font-size:15pt;margin:0}
+  .res-head .eyebrow{display:none}
+  .res-sub{font-size:9pt}
+  .sheet-wrap{break-inside:avoid}
+  #sheet{width:auto!important;height:6.55in!important;max-height:none;margin:0 auto}
+  .sheet-note{display:none}
+  .brief{break-before:page}
+  .brief h3{font-size:13pt}
+  .ctable{font-size:8.6pt}
+  .ctable th,.ctable td{padding:5pt 7pt}
+  .ctable td.src{font-size:7.6pt;width:170px}
+  .ctable .limit{font-size:8pt}
+  .b-grid{grid-template-columns:1fr 1fr 1fr;gap:8pt;margin-top:10pt;font-size:8.6pt}
+  .b-card{padding:9pt}
+  .b-card h3,.rec-name{font-size:11pt}
+  .ticks li{padding:2pt 0 2pt 14pt}
+  .ticks li::before{top:8pt}
+  .refs{font-size:8pt}
   .results[hidden]{display:none!important}
   .res-grid{display:block}
-  .sheet-wrap{border:0;box-shadow:none;break-after:page}
+  .sheet-wrap{border:0;box-shadow:none}
   #sheet{width:100%;max-height:6.9in}
   .brief{margin-top:0}
   .b-grid{grid-template-columns:1fr 1fr;gap:14px}
