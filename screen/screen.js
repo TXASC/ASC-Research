@@ -38,8 +38,8 @@ const ICON = {
   sf:'<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/>',
   land:'<path d="M2 18c3-4 6-6 9-6s6 3 11 2"/><path d="M2 13c3-3 5-4 8-4s6 2 12 1"/><path d="M2 8c3-2 5-3 8-3s6 1 12 0"/>'
 };
-const TYPES = [["ind","Industrial or logistics"],["dc","Large campus, data center type"],["mf","Multifamily"],["retail","Retail or commercial"],["sf","Residential lot"],["land","Land or master-planned"]];
-const STAGES = [["early","Early look"],["option","Under option or contract"],["design","Designing or permitting"],["sell","Selling or listing"],["finance","Financing"]];
+const TYPES = [["ind","Industrial"],["dc","Large campus"],["mf","Multifamily"],["retail","Retail or commercial"],["sf","Residential lot"],["land","Land or master-planned"]];
+const STAGES = [["early","Just looking"],["option","Buying it"],["design","Designing or building on it"],["sell","Selling it"],["finance","Financing it"]];
 let TYPE = null, STAGE = "early";
 
 /* ===== Helpers ===== */
@@ -330,8 +330,8 @@ const SAMPLES = [
 
 /* ===== State ===== */
 let current = null, VIEW = "sheet", SKETCH = null, LIST = loadList();
-const LAYERS = [["aerial","Aerial","#8a9aa5"],["contours","Lidar contours","#9a6b3c"],["flood","FEMA flood","#3a74b0"],["wet","Wetlands (NWI)","#2f8a6a"],["water","Streams","#3a9bd0"],["adj","Neighbors","#7c8790"],["power","Transmission","#c27a10"]];
-const LAYER_ON = {aerial:false, contours:true, flood:true, wet:true, water:true, adj:true, power:true};
+const LAYERS = [["ghost","Faded aerial","#b9c3ca"],["aerial","Full aerial","#8a9aa5"],["contours","Lidar contours","#9a6b3c"],["flood","FEMA flood","#3a74b0"],["wet","Wetlands (NWI)","#2f8a6a"],["water","Streams","#3a9bd0"],["adj","Neighbors","#7c8790"],["power","Transmission","#c27a10"]];
+const LAYER_ON = {ghost:true, aerial:false, contours:true, flood:true, wet:true, water:true, adj:true, power:true};
 
 /* ===== Build a site object ===== */
 function frameFor(rings){ const [x0,y0,x1,y1] = bbox(rings), w = x1-x0, h = y1-y0, s = Math.max(w,h), pad = Math.max(s*0.28, 180);
@@ -474,9 +474,36 @@ function roMeter(k){ const s = RO_S; if(!s) return null; const L = s.layers, ok 
   if(k==="soils" && ok("soils") && L.soils.units[0]) return {v:L.soils.units[0].share, lab:`main unit ~${fmt(L.soils.units[0].share*100,0)}%`};
   if(k==="terrain" && ok("terrain")) return {v:Math.min(1,(L.terrain.meanSlope||0)/10), lab:`avg slope ${fmt(L.terrain.meanSlope,1)}% of a 10% scale`};
   return null; }
+/* each record row carries a small plat-style thumbnail drawn from that layer's own data on this tract */
+function roThumb(k, st){
+  const s = RO_S; if(!s || !s.rings || !s.rings.length) return "";
+  s._th = s._th || {}; const L = s.layers, key = k + "|" + st + "|" + (L[k] ? L[k].status : "");
+  if(s._th[key]) return s._th[key];
+  const N = 52, [x0,y0,x1,y1] = bbox(s.rings), span = Math.max(x1-x0, y1-y0) * (k==="power" ? 4 : 1.7) || 600, cx = (x0+x1)/2, cy = (y0+y1)/2;
+  const X = x => ((x-cx)/span + .5) * N, Y = y => (.5 - (y-cy)/span) * N;
+  const P = (rings, close=true) => rings.map(r=>r.map((q,i)=>(i?"L":"M")+X(q[0]).toFixed(1)+" "+Y(q[1]).toFixed(1)).join("")+(close?"Z":"")).join("");
+  const c = (RO_META[k]||[])[2] || "#9aabb9", ok = L[k] && L[k].status==="ok", id = "th"+k+s.id, o = [];
+  o.push(`<defs><clipPath id="${id}"><rect width="${N}" height="${N}" rx="9"/></clipPath><pattern id="${id}h" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><path d="M0 0V4" stroke="${c}" stroke-width="1.2" opacity=".8"/></pattern></defs>`);
+  o.push(`<g clip-path="url(#${id})"><rect width="${N}" height="${N}" fill="#0b1219"/><path d="M13 0V${N}M26 0V${N}M39 0V${N}M0 13H${N}M0 26H${N}M0 39H${N}" stroke="rgba(255,255,255,.05)"/>`);
+  let tractFill = "rgba(255,255,255,.06)";
+  if(ok && k==="flood") for(const p of L.flood.polys.filter(p=>p.sfha)) o.push(`<path d="${P(p.rings)}" fill="url(#${id}h)" fill-rule="evenodd" stroke="${c}" stroke-width=".8"/>`);
+  if(ok && k==="wet") for(const p of L.wet.polys) o.push(`<path d="${P(p.rings)}" fill="url(#${id}h)" fill-rule="evenodd" stroke="${c}" stroke-width=".8"/>`);
+  if(ok && k==="water") for(const i of L.water.items){ if(i.paths) o.push(`<path d="${P(i.paths,false)}" fill="none" stroke="${c}" stroke-width="1.6"/>`); if(i.rings) o.push(`<path d="${P(i.rings)}" fill="${c}" fill-opacity=".3"/>`); }
+  if(ok && k==="power") for(const l of L.power.lines) o.push(`<path d="${P(l.paths,false)}" fill="none" stroke="${c}" stroke-width="1.4" stroke-dasharray="5 2 1 2"/>`);
+  if(ok && k==="terrain" && L.terrain.grid){ const g = L.terrain.grid, fr = frameRelief(g), iv = [1,2,5,10,20,50,100].find(v => fr/v <= 9) || 100;
+    const d = contourSegs(g, iv).map(q=>`M${X(q[0]).toFixed(1)} ${Y(q[1]).toFixed(1)}L${X(q[2]).toFixed(1)} ${Y(q[3]).toFixed(1)}`).join(""); o.push(`<path d="${d}" stroke="${c}" stroke-width=".7" fill="none" opacity=".9"/>`); }
+  if(ok && k==="soils") tractFill = `url(#${id}h)`;
+  if(ok && k==="flood" && L.flood.shareSFHA <= 0.005) tractFill = "rgba(67,194,138,.18)";
+  o.push(`<path d="${P(s.rings)}" fill="${k==="parcel"?"rgba(208,49,45,.28)":tractFill}" fill-rule="evenodd" stroke="#fff" stroke-width="1.3" stroke-linejoin="round"/>`);
+  if(k==="parcel") for(const r of s.rings) for(const q of r.slice(0,-1).slice(0,40)) o.push(`<circle cx="${X(q[0]).toFixed(1)}" cy="${Y(q[1]).toFixed(1)}" r="1.3" fill="#ff8a7f"/>`);
+  if(k==="juris" && ok){ const nm = (L.juris.name || "ETJ").replace(/^city of /i,"").slice(0,4).toUpperCase(); o.push(`<rect x="3" y="3" width="${N-6}" height="${N-6}" rx="6" fill="none" stroke="${c}" stroke-dasharray="3 2" opacity=".8"/><text x="${N/2}" y="${N-6}" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="7" fill="${c}">${esc(nm)}</text>`); }
+  if(st==="wait") o.push(`<rect class="th-scan" x="-20" y="0" width="16" height="${N}" fill="${c}" opacity=".25"/>`);
+  o.push(`<path d="M${N-9} 5l2 4h-4z" fill="rgba(255,255,255,.5)"/></g>`);
+  return s._th[key] = `<svg class="ro-th" viewBox="0 0 ${N} ${N}" width="${N}" height="${N}" aria-hidden="true">${o.join("")}</svg>`;
+}
 function readoutRow(k, label, value, sub, st){
   const [ico, src, c] = RO_META[k] || ["sheet","",""], m = roMeter(k), sig = value + "|" + st, fresh = RO_PREV[k] !== undefined && RO_PREV[k] !== sig && st==="ok"; RO_PREV[k] = sig;
-  return `<li class="ro ${st}${fresh?" fresh":""}" style="--c:${c}"><span class="ro-ico" aria-hidden="true"><svg viewBox="0 0 24 24">${WF_ICO[ico]}</svg><span class="st ${st}"></span></span><div class="ro-body"><div class="ro-k">${esc(label)}<span class="ro-src">${esc(src)}</span></div><div class="ro-v">${value}</div>${m?`<div class="ro-m" title="${esc(m.lab)}"><i style="width:${Math.max(2,Math.round(m.v*100))}%"></i></div>`:""}${sub?`<div class="ro-s">${sub}</div>`:""}</div></li>`; }
+  return `<li class="ro ${st}${fresh?" fresh":""}" style="--c:${c}"><span class="ro-ico" aria-hidden="true">${roThumb(k, st) || `<svg viewBox="0 0 24 24">${WF_ICO[ico]}</svg>`}<span class="st ${st}"></span></span><div class="ro-body"><div class="ro-k">${esc(label)}<span class="ro-src">${esc(src)}</span></div><div class="ro-v">${value}</div>${m?`<div class="ro-m" title="${esc(m.lab)}"><i style="width:${Math.max(2,Math.round(m.v*100))}%"></i></div>`:""}${sub?`<div class="ro-s">${sub}</div>`:""}</div></li>`; }
 function failText(l){ return l && l.status==="fail" ? "The public service didn't answer, so this layer is left off. Nothing was assumed." : "Loading…"; }
 function renderReadout(s){
   RO_S = s; const L = s.layers, rows = [];
@@ -544,7 +571,7 @@ function drawSheet(s){
   if(!s) return; const svg = $("#sheet"), T = sheetXform(s), L = s.layers, o = [];
   const [x0,y0,x1,y1] = s.frame, seen = s._seen || (s._seen = new Set());
   const fx = k => { if(seen.has(k)) return ""; seen.add(k); return ' class="fx"'; };
-  o.push(`<defs>
+  o.push(`<defs><filter id="fGhost"><feColorMatrix type="saturate" values="0.15"/></filter>
     <clipPath id="cpDraw"><rect x="${DX}" y="${DY}" width="${DW}" height="${DH}"/></clipPath>
     <clipPath id="cpVic"><rect x="${NX+150}" y="${DY+4}" width="${NW-152}" height="112"/></clipPath>
     <pattern id="hFlood" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="8" stroke="#2f6aa8" stroke-width="1.1" stroke-opacity=".8"/></pattern>
@@ -556,9 +583,11 @@ function drawSheet(s){
   o.push(`<rect x="0" y="0" width="${SW}" height="${SH}" fill="#fff"/>`);
   o.push(`<g clip-path="url(#cpDraw)">`);
   const aerialOn = LAYER_ON.aerial && !s.sample;
-  if(aerialOn){ const a = s.P.i([x0,y0]), b = s.P.i([x1,y1]);
+  const ghostOn = LAYER_ON.ghost && !aerialOn && !s.sample;
+  if(aerialOn || ghostOn){ const a = s.P.i([x0,y0]), b = s.P.i([x1,y1]);
     const url = CONFIG.imagery + "?" + qs({bbox:[a[0],a[1],b[0],b[1]].join(","), bboxSR:4326, imageSR:4326, size:"1180,1160", format:"jpg", f:"image"});
-    o.push(`<image href="${esc(url)}" x="${DX}" y="${DY}" width="${DW}" height="${DH}" preserveAspectRatio="none" opacity=".62"/>`); }
+    o.push(aerialOn ? `<image href="${esc(url)}" x="${DX}" y="${DY}" width="${DW}" height="${DH}" preserveAspectRatio="none" opacity=".62"/>`
+      : `<image href="${esc(url)}" x="${DX}" y="${DY}" width="${DW}" height="${DH}" preserveAspectRatio="none" opacity=".3" filter="url(#fGhost)"/>`); }
   const ink = "#111", halo = "#fff";
   // contours: light index-and-intermediate pattern like a plotted topo
   const t = L.terrain;
@@ -835,7 +864,7 @@ function renderSite(s){
   $("#resKind").textContent = s.sample ? "Sample screen" : "Site screen";
   $("#resTitle").textContent = s.title;
   $("#resSub").innerHTML = `${s.sample?'<span class="tag sample">Illustrative sample</span>':s.sketch?'<span class="tag sketch">Sketched outline · live public data</span>':'<span class="tag live">Live public data</span>'}${esc(s.area)}${s.sample?"":" · "+s.center.lat.toFixed(5)+", "+s.center.lng.toFixed(5)}`;
-  $("#layers").innerHTML = LAYERS.map(([k,l,c])=>`<button type="button" class="lyr" data-k="${k}" aria-pressed="${LAYER_ON[k]}" ${s.sample&&(k==="aerial"||k==="adj")?"disabled":""}><i style="background:${c}"></i>${l}</button>`).join("");
+  $("#layers").innerHTML = LAYERS.map(([k,l,c])=>`<button type="button" class="lyr" data-k="${k}" aria-pressed="${LAYER_ON[k]}" ${s.sample&&(k==="aerial"||k==="ghost"||k==="adj")?"disabled":""}><i style="background:${c}"></i>${l}</button>`).join("");
   $("#btnList").textContent = LIST.some(x=>x.key===listKey(s)) ? "On your short list" : "Add to short list";
   renderReadout(s); drawSheet(s); renderBrief(s); renderInsights(s); updPacketForm(); setView(VIEW); renderWorkflow();
 }
@@ -955,7 +984,7 @@ function renderList(){
     LIST.map((x,i)=>`<tr><td><a href="${esc(x.url)}">${esc(x.title)}</a><div class="opt">${esc(x.area)}${x.sample?" · sample":""}</div></td><td class="num">${acTxt(x.acres)}</td><td class="num">${v(x.flood,"%")}${x.floodway?` <span class="opt">(${x.floodway}% floodway)</span>`:""}</td><td class="num">${v(x.wet,"%")}</td><td>${x.stream==null?v(null):x.stream?"Yes":"No"}</td><td class="num">${x.relief==null?v(null):`${x.relief} ft / ${x.slope}%`}</td><td>${v(x.soil)}</td><td class="num">${x.line==null?v(null):`${esc(x.line)} mi${x.kv?` · ${x.kv} kV`:""}`}</td><td>${v(x.juris)}</td><td><button type="button" data-rm="${i}">Remove</button></td></tr>`).join("") + `</tbody>`;
 }
 /* ===== Packet request (the gate: contact details in, packet by email) ===== */
-function updPacketForm(){ const n = LIST.length; $("#listOpt").hidden = !n; $("#listN").textContent = n; $("#pkListItem").hidden = !n; }
+function updPacketForm(){ updRec(); const n = LIST.length; $("#listOpt").hidden = !n; $("#listN").textContent = n; $("#pkListItem").hidden = !n; }
 function unlockBrief(){ $("#briefWrap").classList.remove("locked"); }
 async function submitRequest(e){
   e.preventDefault(); const f = e.target, err = $("#reqErr"); err.hidden = true;
@@ -1004,8 +1033,12 @@ async function runBulk(){
 function setView(v){ VIEW = v; $("#tabSheet").setAttribute("aria-selected", String(v==="sheet")); $("#tabModel").setAttribute("aria-selected", String(v==="model"));
   $("#sheetWrap").hidden = v!=="sheet"; $("#modelWrap").hidden = v!=="model"; $("#layers").hidden = v!=="sheet";
   cancelAnimationFrame(MODEL.raf); if(v==="model"){ MODEL.auto = !matchMedia("(prefers-reduced-motion: reduce)").matches; modelLoop(); } }
-function setType(k, silent){ TYPE = TYPE===k && !silent ? null : k; document.querySelectorAll("#types .chip").forEach(c=>c.setAttribute("aria-pressed", String(c.dataset.k===TYPE))); if(current && !silent) renderBrief(current); }
-function setStage(k){ STAGE = k; document.querySelectorAll("#stages .chip").forEach(c=>c.setAttribute("aria-pressed", String(c.dataset.k===STAGE))); if(current) renderBrief(current); }
+function updRec(){ const el = $("#pfRec"); if(!el) return; if(!current || current.sketch && !current.layers.flood){ el.hidden = true; return; }
+  const r = recommend(current); el.hidden = false;
+  el.innerHTML = r.pri===SURVEYS.none ? `<b>Our read:</b> no survey needed yet. ${esc(r.why)}${r.add?` When it moves forward, plan on ${/^[AEIOU]/i.test(r.add.name)?"an":"a"} ${esc(r.add.name.toLowerCase().replace("alta/nsps","ALTA/NSPS"))}.`:""}`
+    : `<b>Our read:</b> start with ${/^[AEIOU]/i.test(r.pri.name)?"an":"a"} ${esc(r.pri.name.replace(/^ALTA/,"ALTA"))}${r.add?`, then a ${esc(r.add.name.toLowerCase())}`:""}. ${esc(r.why)}`; }
+function setType(k, silent){ TYPE = TYPE===k && !silent ? null : k; document.querySelectorAll("#types .chip").forEach(c=>c.setAttribute("aria-pressed", String(c.dataset.k===TYPE))); if(current && !silent) renderBrief(current); updRec(); }
+function setStage(k){ STAGE = k; document.querySelectorAll("#stages .chip").forEach(c=>c.setAttribute("aria-pressed", String(c.dataset.k===STAGE))); if(current) renderBrief(current); updRec(); }
 
 /* ===== Surveyor's worklist: the layer jobs told as the steps a surveyor takes ===== */
 const WF_ICO = {
@@ -1154,6 +1187,21 @@ function renderInsights(s){
     if(el) box.replaceChild(d, el); else box.appendChild(d); });
   while(box.children.length > list.length) box.lastChild.remove();
 }
+/* hero reel: project-showcase aerials, played through slowly and cross-faded, one after another */
+const HERO_REEL = [];
+function heroReel(){
+  const box = $("#heroReel"); if(!box || !HERO_REEL.length || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  let i = 0; const mk = () => { const v = document.createElement("video"); v.muted = true; v.playsInline = true; v.preload = "auto"; v.setAttribute("muted",""); v.setAttribute("playsinline",""); box.appendChild(v); return v; };
+  const A = mk(), B = mk(); let cur = A;
+  const play = (v, src) => { v.src = src; v.addEventListener("loadedmetadata", ()=>{ v.playbackRate = 0.6; }, {once:true}); return v.play().catch(()=>{}); };
+  const next = () => { const nxt = cur===A ? B : A; i = (i+1) % HERO_REEL.length; play(nxt, HERO_REEL[i]).then(()=>{ nxt.classList.add("on"); cur.classList.remove("on"); const old = cur; cur = nxt; setTimeout(()=>old.pause(), 2600); }); };
+  A.addEventListener("timeupdate", ()=>{ if(cur===A && A.duration && A.currentTime > A.duration - 1.6 && !A._x){ A._x = 1; next(); } });
+  B.addEventListener("timeupdate", ()=>{ if(cur===B && B.duration && B.currentTime > B.duration - 1.6 && !B._x){ B._x = 1; next(); } });
+  [A,B].forEach(v=>v.addEventListener("play", ()=>{ v._x = 0; }));
+  play(A, HERO_REEL[0]).then(()=>A.classList.add("on"));
+  if(HERO_REEL.length === 1){ A.loop = true; }
+  document.addEventListener("visibilitychange", ()=>{ if(document.hidden) cur.pause(); else cur.play().catch(()=>{}); });
+}
 /* cursor readout on the sheet */
 function sheetHover(e){
   const hud = $("#cursorHud"), s = current; if(!s) return;
@@ -1176,7 +1224,7 @@ function init(){
   $("#console").addEventListener("submit", e=>{ e.preventDefault(); screen($("#loc").value); });
   $("#bulkToggle").addEventListener("click", ()=>{ const b = $("#bulk"); b.hidden = !b.hidden; if(!b.hidden) $("#bulkText").focus(); });
   $("#bulkGo").addEventListener("click", runBulk);
-  $("#layers").addEventListener("click", e=>{ const b = e.target.closest(".lyr"); if(!b) return; const k = b.dataset.k; LAYER_ON[k] = !LAYER_ON[k]; b.setAttribute("aria-pressed", String(LAYER_ON[k])); drawSheet(current); });
+  $("#layers").addEventListener("click", e=>{ const b = e.target.closest(".lyr"); if(!b) return; const k = b.dataset.k; LAYER_ON[k] = !LAYER_ON[k]; if(LAYER_ON[k] && (k==="aerial"||k==="ghost")) LAYER_ON[k==="aerial"?"ghost":"aerial"] = false; document.querySelectorAll("#layers .lyr").forEach(x=>x.setAttribute("aria-pressed", String(!!LAYER_ON[x.dataset.k]))); drawSheet(current); });
   $("#tabSheet").addEventListener("click", ()=>setView("sheet")); $("#tabModel").addEventListener("click", ()=>setView("model"));
   $("#btnShare").addEventListener("click", async ()=>{ if(!current) return; const u = shareURL(current); try { await navigator.clipboard.writeText(u); toast("Link copied. It re-runs the screen with today's public data."); } catch(e){ prompt("Copy this link", u); } });
   $("#btnList").addEventListener("click", addCurrentToList);
@@ -1192,7 +1240,7 @@ function init(){
   });
   $("#reqForm").addEventListener("submit", submitRequest);
   $("#again").addEventListener("click", ()=>{ $("#reqForm").reset(); $("#reqForm").hidden = false; $("#reqDone").hidden = true; $("#loc").focus(); window.scrollTo({top:0, behavior:"smooth"}); });
-  initModelInput(); renderList(); renderMonitor();
+  initModelInput(); renderList(); renderMonitor(); heroReel();
   const staff = /[?&]staff=1/.test(location.search); if(staff){ document.body.classList.add("staff"); unlockBrief(); }
   $("#loc").addEventListener("input", e=>{ const m = guessKind(e.target.value); if(m) guide(m); });
   $("#sheet").addEventListener("mousemove", sheetHover); $("#sheet").addEventListener("mouseleave", ()=>{ $("#cursorHud").hidden = true; });
