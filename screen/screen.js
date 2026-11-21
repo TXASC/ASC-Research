@@ -999,14 +999,14 @@ function setStage(k){ STAGE = k; document.querySelectorAll("#stages .chip").forE
 /* ===== Live layer monitor, guide line and insights ===== */
 const MON_SRC = {parcel:"TxGIO",flood:"FEMA NFHL",wet:"USFWS NWI",water:"USGS NHD",soils:"NRCS SSURGO",terrain:"USGS 3DEP",power:"HIFLD",juris:"TxGIO"};
 const MON_T = {};
-function renderMonitor(){ $("#monList").innerHTML = STEPS.map(([k,l])=>`<li data-k="${k}"><span class="st idle" aria-hidden="true"></span><span>${esc(l)}<br><span class="src">${MON_SRC[k]}</span></span><span class="ms">ready</span></li>`).join(""); }
+function renderMonitor(){ $("#monList").innerHTML = STEPS.map(([k,l])=>`<li data-k="${k}"><span class="st idle" aria-hidden="true"></span><span>${esc(l)}<br><span class="src">${MON_SRC[k]}</span></span><span class="ms">standby</span></li>`).join(""); }
 function setStatus(key, st){
   const li = document.querySelector(`#monList li[data-k="${key}"]`); if(!li) return;
   if(st==="wait") MON_T[key] = performance.now();
   const map = {wait:"wait", ok:"ok", fail:"na", na:"off"}, cls = map[st] || "idle";
   li.className = st==="ok" ? "ok" : st==="fail" ? "fail" : "";
   li.querySelector(".st").className = "st " + cls;
-  li.querySelector(".ms").textContent = st==="wait" ? "reading" : st==="ok" ? ((performance.now()-(MON_T[key]||performance.now()))/1000).toFixed(1)+" s" : st==="fail" ? "no answer" : st==="na" ? "n/a" : "ready";
+  li.querySelector(".ms").textContent = st==="wait" ? "reading" : st==="ok" ? ((performance.now()-(MON_T[key]||performance.now()))/1000).toFixed(1)+" s" : st==="fail" ? "no answer" : st==="na" ? "n/a" : "standby";
   const busy = document.querySelectorAll("#monList .st.wait").length, ms = $("#monState");
   ms.textContent = busy ? `Reading ${busy} layer${busy>1?"s":""}` : current ? "Screen complete" : "Standing by"; ms.classList.toggle("run", !!busy);
   const pl = $("#panelLive"); if(pl) pl.textContent = busy ? `Reading ${busy}` : "Live";
