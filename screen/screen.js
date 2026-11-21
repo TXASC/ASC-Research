@@ -466,18 +466,28 @@ async function screenLayers(s, only){
 
 /* ===== Status / readout ===== */
 function stateOf(s, key){ if(key==="parcel") return "ok"; const l = s.layers[key]; return !l ? "wait" : l.status==="ok" ? "ok" : l.status==="wait" ? "wait" : l.status==="na" ? "off" : "na"; }
-function readoutRow(k, label, value, sub, st){ return `<li><span class="st ${st}" aria-hidden="true"></span><div><div class="ro-k">${esc(label)}</div><div class="ro-v">${value}</div>${sub?`<div class="ro-s">${sub}</div>`:""}</div></li>`; }
+const RO_META = {parcel:["pen","TxGIO StratMap","#ff6a5e"],flood:["wave","FEMA NFHL","#5ab0ff"],wet:["drop","USFWS NWI","#5fd3a8"],water:["drop","USGS NHD","#4fb6e8"],soils:["layers","NRCS SSURGO","#c9a36b"],terrain:["contour","USGS 3DEP","#e0a33b"],power:["bolt","HIFLD","#f0b35a"],juris:["sheet","TxGIO","#b9a7ff"]};
+let RO_S = null; const RO_PREV = {};
+function roMeter(k){ const s = RO_S; if(!s) return null; const L = s.layers, ok = x => L[x] && L[x].status==="ok";
+  if(k==="flood" && ok("flood")) return {v:L.flood.shareSFHA, lab:`${fmt(L.flood.shareSFHA*100,0)}% in mapped 1%`};
+  if(k==="wet" && ok("wet")) return {v:L.wet.share, lab:`${fmt(L.wet.share*100,1)}% mapped`};
+  if(k==="soils" && ok("soils") && L.soils.units[0]) return {v:L.soils.units[0].share, lab:`main unit ~${fmt(L.soils.units[0].share*100,0)}%`};
+  if(k==="terrain" && ok("terrain")) return {v:Math.min(1,(L.terrain.meanSlope||0)/10), lab:`avg slope ${fmt(L.terrain.meanSlope,1)}% of a 10% scale`};
+  return null; }
+function readoutRow(k, label, value, sub, st){
+  const [ico, src, c] = RO_META[k] || ["sheet","",""], m = roMeter(k), sig = value + "|" + st, fresh = RO_PREV[k] !== undefined && RO_PREV[k] !== sig && st==="ok"; RO_PREV[k] = sig;
+  return `<li class="ro ${st}${fresh?" fresh":""}" style="--c:${c}"><span class="ro-ico" aria-hidden="true"><svg viewBox="0 0 24 24">${WF_ICO[ico]}</svg><span class="st ${st}"></span></span><div class="ro-body"><div class="ro-k">${esc(label)}<span class="ro-src">${esc(src)}</span></div><div class="ro-v">${value}</div>${m?`<div class="ro-m" title="${esc(m.lab)}"><i style="width:${Math.max(2,Math.round(m.v*100))}%"></i></div>`:""}${sub?`<div class="ro-s">${sub}</div>`:""}</div></li>`; }
 function failText(l){ return l && l.status==="fail" ? "The public service didn't answer, so this layer is left off. Nothing was assumed." : "Loading…"; }
 function renderReadout(s){
-  const L = s.layers, rows = [];
+  RO_S = s; const L = s.layers, rows = [];
   const parcelSub = s.sample ? "Illustrative sample, not a real parcel" : s.sketch ? "Your sketched outline" : `Appraisal record ${s.propId?("#"+esc(s.propId)):""} &middot; ${esc(titleCase(s.source||""))}${s.taxYear?(" "+esc(s.taxYear)):""}`;
-  rows.push(readoutRow("parcel", s.added.length ? "Assemblage" : "Parcel", `${acTxt(s.acres)} acres <span class="opt" style="color:#93aab8">(GIS, approx.)</span>`, parcelSub + (s.legalAcres && !s.added.length ? ` &middot; ${fmt(s.legalAcres,2)} ac on the appraisal roll` : ""), "ok"));
+  rows.push(readoutRow("parcel", s.added.length ? "Assemblage" : "Parcel", `${acTxt(s.acres)} acres <span class="opt">(GIS, approx.)</span>`, parcelSub + (s.legalAcres && !s.added.length ? ` &middot; ${fmt(s.legalAcres,2)} ac on the appraisal roll` : ""), "ok"));
   const f = L.flood; rows.push(readoutRow("flood","FEMA floodplain", f && f.status==="ok" ? (f.shareSFHA>0.005 ? `About ${fmt(f.shareSFHA*100,0)}% in the mapped 1% annual-chance floodplain` : "Outside the mapped 1% annual-chance floodplain") : esc(failText(f)),
     f && f.status==="ok" ? (f.shareSFHA>0.005 ? `Approximately ${fmt((1-f.shareSFHA)*100,0)}% of the tract is outside mapped floodplain${f.shareFloodway>0.005?`; about ${fmt(f.shareFloodway*100,0)}% in mapped floodway`:""}. ` : "") + "From an aligned FEMA map overlay, not an elevation survey." : "", stateOf(s,"flood")));
   const w = L.wet; rows.push(readoutRow("wet","Wetlands (NWI)", w && w.status==="ok" ? (w.share>0.002 ? `About ${fmt(w.share*100,1)}% mapped as wetland or water` : w.nearby ? "None mapped on the tract; some nearby" : "None mapped on or near the tract") : esc(failText(w)),
     w && w.status==="ok" && w.typesOnTract.length ? esc(w.typesOnTract.join(", ")) + ". A mapped indicator, not a delineation." : w && w.status==="ok" ? "A mapped indicator, not a delineation." : "", stateOf(s,"wet")));
   const wa = L.water; rows.push(readoutRow("water","Mapped streams", wa && wa.status==="ok" ? (wa.crossing ? "A mapped stream or water body touches the tract" : "None mapped across the tract") : esc(failText(wa)), wa && wa.status==="ok" && wa.names && wa.names.length ? esc(wa.names.slice(0,2).join(", ")) : "", stateOf(s,"water")));
-  const so = L.soils; rows.push(readoutRow("soils","Soils (SSURGO)", so && so.status==="ok" ? (so.units.length ? esc(so.units[0].name.split(",")[0]) + ` <span class="opt" style="color:#93aab8">~${fmt(so.units[0].share*100,0)}%</span>` : "No soil map units returned") : esc(failText(so)),
+  const so = L.soils; rows.push(readoutRow("soils","Soils (SSURGO)", so && so.status==="ok" ? (so.units.length ? esc(so.units[0].name.split(",")[0]) + ` <span class="opt">~${fmt(so.units[0].share*100,0)}%</span>` : "No soil map units returned") : esc(failText(so)),
     so && so.status==="ok" && so.units.length ? `${so.units.length} map unit${so.units.length>1?"s":""}. Hydrologic group ${esc(so.units[0].hyd||"n/a")}. A screening hint, not a geotechnical report.` : "", stateOf(s,"soils")));
   const t = L.terrain; rows.push(readoutRow("terrain","Terrain (public lidar)", t && t.status==="ok" ? `${fmt(t.relief,0)} ft of relief, average slope ~${fmt(t.meanSlope,1)}%` : esc(failText(t)),
     t && t.status==="ok" ? `${t.fallDir ? "Ground generally falls toward the " + t.fallDir + ". " : "Nearly level overall. "}Approximate, from USGS 3DEP. Not a design topo.` : "", stateOf(s,"terrain")));
@@ -827,7 +837,7 @@ function renderSite(s){
   $("#resSub").innerHTML = `${s.sample?'<span class="tag sample">Illustrative sample</span>':s.sketch?'<span class="tag sketch">Sketched outline · live public data</span>':'<span class="tag live">Live public data</span>'}${esc(s.area)}${s.sample?"":" · "+s.center.lat.toFixed(5)+", "+s.center.lng.toFixed(5)}`;
   $("#layers").innerHTML = LAYERS.map(([k,l,c])=>`<button type="button" class="lyr" data-k="${k}" aria-pressed="${LAYER_ON[k]}" ${s.sample&&(k==="aerial"||k==="adj")?"disabled":""}><i style="background:${c}"></i>${l}</button>`).join("");
   $("#btnList").textContent = LIST.some(x=>x.key===listKey(s)) ? "On your short list" : "Add to short list";
-  renderReadout(s); drawSheet(s); renderBrief(s); renderInsights(s); updPacketForm(); setView(VIEW);
+  renderReadout(s); drawSheet(s); renderBrief(s); renderInsights(s); updPacketForm(); setView(VIEW); renderWorkflow();
 }
 
 /* ===== Main flow ===== */
@@ -869,6 +879,7 @@ function offerSketch(center){
   const base = newSite({sample:false, sketch:true, input:"sketch", kind:"Sketch", center, P, rings:[ring.map(p=>[p[0]/50,p[1]/50])], county:null, legal:null, area:"Texas", parcels:[]});
   base.frame = [-half,-half*DH/DW,half,half*DH/DW]; base.title = "Sketch a tract here"; base.layers = {aerial:{status:"na"}};
   current = base; $("#results").hidden = false; renderSite(base); $("#brief").innerHTML = ""; $("#adjBox").hidden = true;
+  $("#insights").innerHTML = ""; $("#wfState").textContent = "Waiting on your outline";
   $("#readout").innerHTML = '<li><span class="st na" aria-hidden="true"></span><div><div class="ro-k">No parcel at that point</div><div class="ro-v">Sketch the tract on the aerial</div><div class="ro-s">Click the corners on the sheet, then choose Screen this outline. Every layer runs on your outline.</div></div></li>';
   startSketch();
   $("#results").scrollIntoView({behavior:"smooth"});
@@ -996,22 +1007,92 @@ function setView(v){ VIEW = v; $("#tabSheet").setAttribute("aria-selected", Stri
 function setType(k, silent){ TYPE = TYPE===k && !silent ? null : k; document.querySelectorAll("#types .chip").forEach(c=>c.setAttribute("aria-pressed", String(c.dataset.k===TYPE))); if(current && !silent) renderBrief(current); }
 function setStage(k){ STAGE = k; document.querySelectorAll("#stages .chip").forEach(c=>c.setAttribute("aria-pressed", String(c.dataset.k===STAGE))); if(current) renderBrief(current); }
 
-/* ===== Live layer monitor, guide line and insights ===== */
-const MON_SRC = {parcel:"TxGIO",flood:"FEMA NFHL",wet:"USFWS NWI",water:"USGS NHD",soils:"NRCS SSURGO",terrain:"USGS 3DEP",power:"HIFLD",juris:"TxGIO"};
-const MON_T = {};
-function renderMonitor(){ $("#monList").innerHTML = STEPS.map(([k,l])=>`<li data-k="${k}"><span class="st idle" aria-hidden="true"></span><span>${esc(l)}<br><span class="src">${MON_SRC[k]}</span></span><span class="ms">standby</span></li>`).join(""); }
-function setStatus(key, st){
-  const li = document.querySelector(`#monList li[data-k="${key}"]`); if(!li) return;
-  if(st==="wait") MON_T[key] = performance.now();
-  const map = {wait:"wait", ok:"ok", fail:"na", na:"off"}, cls = map[st] || "idle";
-  li.className = st==="ok" ? "ok" : st==="fail" ? "fail" : "";
-  li.querySelector(".st").className = "st " + cls;
-  li.querySelector(".ms").textContent = st==="wait" ? "reading" : st==="ok" ? ((performance.now()-(MON_T[key]||performance.now()))/1000).toFixed(1)+" s" : st==="fail" ? "no answer" : st==="na" ? "n/a" : "standby";
-  const busy = document.querySelectorAll("#monList .st.wait").length, ms = $("#monState");
-  ms.textContent = busy ? `Reading ${busy} layer${busy>1?"s":""}` : current ? "Screen complete" : "Standing by"; ms.classList.toggle("run", !!busy);
-  const pl = $("#panelLive"); if(pl) pl.textContent = busy ? `Reading ${busy}` : "Live";
+/* ===== Surveyor's worklist: the layer jobs told as the steps a surveyor takes ===== */
+const WF_ICO = {
+  search:'<circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/><path class="a" d="M8 10.5h5"/>',
+  pen:'<path d="M4 20l1-4L16 5l3 3L8 19z"/><path class="a" d="M3 21h9"/>',
+  wave:'<path class="a" d="M2 15c2.5-2 4.5-2 7 0s4.5 2 7 0 4.5-2 6 0"/><path d="M2 10c2.5-2 4.5-2 7 0s4.5 2 7 0 4.5-2 6 0"/>',
+  drop:'<path d="M12 3c3 4 6 7.5 6 11a6 6 0 0 1-12 0c0-3.5 3-7 6-11z"/><path class="a" d="M9 15a3 3 0 0 0 3 3"/>',
+  layers:'<path d="M12 3l9 5-9 5-9-5z"/><path class="a" d="M3 13l9 5 9-5"/>',
+  contour:'<path d="M3 17c3-5 6-7 9-7s6 2 9 7"/><path class="a" d="M6 17c2-3 4-4 6-4s4 1 6 4"/><path d="M3 20h18"/>',
+  bolt:'<path d="M13 2L5 13h6l-1 9 8-12h-6z"/>',
+  sheet:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M16 4v16"/><path class="a" d="M6 15l3-5 3 3 2-3"/>'
+};
+const WF = [
+  {id:"rec",   t:"Researching the record",       d:"Appraisal roll and legal description", keys:["parcel"], ico:"search"},
+  {id:"sketch",t:"Preparing the tract sketch",   d:"Outline from county appraisal mapping", keys:["parcel"], ico:"pen"},
+  {id:"flood", t:"Checking the flood map",       d:"FEMA National Flood Hazard Layer",      keys:["flood"],  ico:"wave"},
+  {id:"water", t:"Tracing water and wetlands",   d:"USFWS NWI and USGS NHD",                keys:["wet","water"], ico:"drop"},
+  {id:"soils", t:"Reading the soils",            d:"NRCS SSURGO",                           keys:["soils"],  ico:"layers"},
+  {id:"topo",  t:"Gathering the topo",           d:"USGS 3DEP public lidar",                keys:["terrain"],ico:"contour"},
+  {id:"power", t:"Checking power and city limits",d:"HIFLD lines and TxGIO city limits",    keys:["power","juris"], ico:"bolt"},
+  {id:"exhibit",t:"Drafting the exhibit",        d:"Laying it out on the ASC sheet",        keys:"all",      ico:"sheet"}
+];
+const LST = {}, MON_T = {}, WF_T = {};
+/* a sketched outline has no appraisal record: once its layers start, the record steps count as done */
+function lst(k){ const v = LST[k] || "idle"; if(k==="parcel" && v==="idle" && current && current.sketch && STEPS.some(([x])=>x!=="parcel" && LST[x] && LST[x]!=="idle")) return "ok"; return v; }
+function wfState(step){
+  const keys = step.keys === "all" ? STEPS.map(x=>x[0]) : step.keys, st = keys.map(lst);
+  if(step.keys === "all"){ if(st.every(x=>x==="idle")) return "idle"; return st.some(x=>x==="wait"||x==="idle") ? (lst("parcel")==="ok"?"wait":"idle") : "ok"; }
+  if(st.some(x=>x==="wait")) return "wait"; if(st.every(x=>x==="idle")) return "idle";
+  if(st.every(x=>x==="ok"||x==="na")) return "ok"; return st.some(x=>x==="ok"||x==="na") ? "part" : "fail";
 }
-function resetMonitor(){ STEPS.forEach(([k])=>setStatus(k,"idle")); }
+const WF_SRC_NAME = {wet:"wetlands map", water:"stream map", power:"transmission map", juris:"city limits map"};
+function wfDetail(step, s){
+  if(!s) return step.d;
+  if(Array.isArray(step.keys) && step.keys.length > 1){ const miss = step.keys.filter(k=>lst(k)==="fail").map(k=>WF_SRC_NAME[k]||k);
+    if(miss.length){ const rest = wfDetail0(step, s); return (rest && rest !== step.d ? rest + " · " : "") + miss.join(", ") + " did not answer"; } }
+  return wfDetail0(step, s); }
+function wfDetail0(step, s){ const L = s.layers, ok = k => L[k] && L[k].status==="ok", r = s.refs || {};
+  switch(step.id){
+    case "rec": return s.sample ? "Illustrative sample record" : s.sketch ? "Sketched outline, no record attached" : [s.propId && "ID " + s.propId, r.abstract && "Abstract " + r.abstract, r.lot && "Lot " + r.lot, r.block && "Block " + r.block].filter(Boolean).slice(0,3).join(" · ") || (s.county ? titleCase(s.county) + " County roll" : step.d);
+    case "sketch": return `${acTxt(s.acres)} acres ± · ${s.rings.reduce((t,x)=>t+x.length,0)} vertices`;
+    case "flood": return ok("flood") ? (L.flood.shareSFHA>0.005 ? `~${fmt(L.flood.shareSFHA*100,0)}% in mapped 1% floodplain` : "Outside mapped 1% floodplain") + (L.flood.panel && !s.sample ? ` · ${L.flood.panel}` : "") : step.d;
+    case "water": return ok("wet") || ok("water") ? [ok("wet") ? (L.wet.share>0.002 ? `~${fmt(L.wet.share*100,1)}% mapped wetland` : "No mapped wetland on tract") : null, ok("water") ? (L.water.crossing ? "stream touches tract" : "no mapped stream across") : null].filter(Boolean).join(" · ") : step.d;
+    case "soils": return ok("soils") && L.soils.units[0] ? `${L.soils.units[0].name.split(",")[0]} · group ${L.soils.units[0].hyd||"n/a"}` : step.d;
+    case "topo": return ok("terrain") ? `${fmt(L.terrain.min,0)}–${fmt(L.terrain.max,0)} ft · ${s._contourIv||"–"}-ft contours` : step.d;
+    case "power": return [ok("power") ? (L.power.nearest ? `line ~${fmt(L.power.nearest.d/5280,1)} mi` : "no line nearby") : null, ok("juris") ? (L.juris.name ? titleCase(L.juris.name) : L.juris.text || "outside city limits") : null].filter(Boolean).join(" · ") || step.d;
+    case "exhibit": return wfState(step)==="ok" ? `Sheet 1 of 1 · ${screenNo(s)}` : step.d;
+  }
+  return step.d;
+}
+function wfHTML(step, s, compact, st){
+  st = st || wfState(step); const t = WF_T[step.id];
+  const ms = st==="wait" ? "on it" : st==="ok" ? (t && +t >= 0.2 ? t + " s" : "done") : st==="part" ? "partial" : st==="fail" ? "no answer" : "queued";
+  return `<li class="wf ${st}" data-id="${step.id}"><span class="wf-ico" aria-hidden="true"><svg viewBox="0 0 24 24">${WF_ICO[step.ico]}</svg></span>
+    <span class="wf-txt"><span class="wf-t">${esc(step.t)}</span>${compact?"":`<span class="wf-d">${esc(st==="idle"||st==="wait"?step.d:wfDetail(step, s))}</span>`}</span><span class="wf-ms">${ms}</span></li>`;
+}
+/* the worklist plays in order, one step at a time, so it reads like a surveyor working down the list */
+let WF_SHOWN = 0, WF_TICK = 0;
+function wfShown(i){ const real = wfState(WF[i]); if(i < WF_SHOWN) return real; if(i === WF_SHOWN && WF.some(w=>wfState(w)!=="idle")) return "wait"; return "idle"; }
+function wfAdvance(){ WF_TICK = 0; if(WF_SHOWN >= WF.length) return; const r = wfState(WF[WF_SHOWN]);
+  if(r === "ok" || r === "part" || r === "fail"){ WF_SHOWN++; paintWorkflow(); }
+  if(WF_SHOWN < WF.length && WF.some(w=>wfState(w)!=="idle")) WF_TICK = setTimeout(wfAdvance, matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 520); }
+function renderWorkflow(){
+  WF.forEach(w=>{ const st = wfState(w); if(st==="wait" && !WF_T["_"+w.id]) WF_T["_"+w.id] = performance.now(); if((st==="ok"||st==="part") && WF_T["_"+w.id] && !WF_T[w.id]) WF_T[w.id] = ((performance.now()-WF_T["_"+w.id])/1000).toFixed(1); });
+  paintWorkflow(); if(!WF_TICK) WF_TICK = setTimeout(wfAdvance, 260); }
+function paintWorkflow(){
+  const s = current, sts = WF.map((w,i)=>wfShown(i)), done = sts.filter(x=>x==="ok"||x==="part"||x==="fail").length, busy = sts.some(x=>x==="wait");
+  const row = (w,i,c) => wfHTML(w, s, c, sts[i]);
+  const m = $("#monList"); if(m) m.innerHTML = WF.map((w,i)=>row(w,i,false)).join("");
+  const strip = $("#wfStrip"); if(strip) strip.innerHTML = WF.map((w,i)=>row(w,i,true)).join("");
+  const pct = Math.round(done/WF.length*100); document.querySelectorAll(".wf-bar i").forEach(b=>b.style.width = pct+"%");
+  const ms = $("#monState"); if(ms){ ms.textContent = busy ? `Working · ${done} of ${WF.length}` : done===WF.length ? "Exhibit drafted" : "Standing by"; ms.classList.toggle("run", busy); }
+  const ws = $("#wfState"); if(ws) ws.textContent = busy ? `Step ${Math.min(done+1, WF.length)} of ${WF.length} · ${WF[Math.min(done, WF.length-1)].t}` : done===WF.length ? "Worked up · sheet drafted" : "";
+}
+function renderMonitor(){ renderWorkflow(); }
+function setStatus(key, st){
+  LST[key] = st === "fail" ? "fail" : st;
+  if(st==="wait") MON_T[key] = performance.now();
+  renderWorkflow(); renderPanelHead();
+}
+function resetMonitor(){ STEPS.forEach(([k])=>{ LST[k] = "idle"; }); Object.keys(WF_T).forEach(k=>delete WF_T[k]); WF_SHOWN = 0; clearTimeout(WF_TICK); WF_TICK = 0; renderWorkflow(); renderPanelHead(); }
+function renderPanelHead(){
+  const pl = $("#panelLive"); if(!pl) return; const n = STEPS.length, ok = STEPS.filter(([k])=>LST[k]==="ok"||LST[k]==="na").length, busy = STEPS.some(([k])=>LST[k]==="wait");
+  pl.textContent = busy ? `Reading · ${ok}/${n}` : `${ok}/${n} layers read`; pl.classList.toggle("busy", busy);
+}
+
+/* ===== Guide line and insights ===== */
 let GUIDE_T = 0;
 function guide(msg, cls){ const g = $("#guide"); if(!g) return; clearInterval(GUIDE_T); g.className = "guide" + (cls?" "+cls:"");
   if(matchMedia("(prefers-reduced-motion: reduce)").matches || msg.includes("<")){ g.innerHTML = msg; return; }
@@ -1048,26 +1129,30 @@ function insights(s){
     out.push({c:"#f0b35a", h:"Transmission", p:`${n ? (n.d===0 ? "A mapped transmission line crosses the tract" : `The nearest mapped transmission line is about ${fmt(n.d/5280,1)} mi away`) + (n.kv?` (${fmt(n.kv,0)} kV class)`:"") : `No transmission line is mapped within ${s.powerMi||CONFIG.powerRadiusMi} mi`}. Proximity only; capacity is a utility and ERCOT question.`}); }
   return out.slice(0,4);
 }
+/* motion cards: each theme gets a quiet b-roll loop under its text (a drawn motif stands in until the clip loads) */
+const INS_THEME = {"Floodplain":"flood","Ground":"ground","Water features":"water","Record":"record","Assemblage":"record","Transmission":"power"};
+const INS_CLIP = {flood:"img/clips/flood.mp4", ground:"img/clips/ground.mp4", water:"img/clips/water.mp4", power:"img/clips/power.mp4"}; /* records.mp4 joins when the file-room footage is picked */
+function insMedia(th){
+  const m = document.createElement("div"); m.className = "ins-media"; m.setAttribute("aria-hidden","true");
+  m.innerHTML = `<div class="ins-motif m-${th}"></div>`;
+  const src = INS_CLIP[th], still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if(src){ const v = document.createElement("video"); v.muted = true; v.playsInline = true; v.setAttribute("muted",""); v.setAttribute("playsinline","");
+    v.addEventListener("error", ()=>v.remove());
+    if(still){ v.preload = "auto"; v.addEventListener("loadeddata", ()=>{ v.currentTime = Math.min(1.5, (v.duration||2)/2); }, {once:true}); v.addEventListener("seeked", ()=>m.classList.add("has-clip"), {once:true}); }
+    else { v.loop = true; v.autoplay = true; v.preload = "metadata"; v.addEventListener("playing", ()=>m.classList.add("has-clip"), {once:true}); }
+    v.src = src; m.prepend(v); }
+  return m; }
 function renderInsights(s){
-  const box = $("#insights"); if(!box || !s) return;
+  const box = $("#insights"); if(!box || !s) return; if(s.layers && !s.layers.flood && s.sketch){ box.innerHTML = ""; return; }
   const list = insights(s), have = [...box.children];
-  list.forEach((x,i)=>{ const html = `<b>${esc(x.h)}</b><p>${esc(x.p)}</p>`, el = have[i];
-    const key = x.h + (x.wait?":w:":":") + x.p;
+  list.forEach((x,i)=>{ const el = have[i], key = x.h + (x.wait?":w:":":") + x.p, th = INS_THEME[x.h] || "record";
     if(el && el.dataset.h === key) return;
-    const d = document.createElement("div"); d.className = "ins" + (x.wait?" wait":""); d.dataset.h = key; if(x.c) d.style.setProperty("--c", x.c); d.style.animationDelay = (i*90)+"ms"; d.innerHTML = html;
+    if(el && el.dataset.th === th){ el.dataset.h = key; el.className = "ins" + (x.wait?" wait":""); if(x.c) el.style.setProperty("--c", x.c);
+      const body = el.querySelector(".ins-body"); body.innerHTML = `<b>${esc(x.h)}</b><p>${esc(x.p)}</p>`; body.classList.remove("swap"); void body.offsetWidth; body.classList.add("swap"); return; }
+    const d = document.createElement("div"); d.className = "ins" + (x.wait?" wait":""); d.dataset.h = key; d.dataset.th = th; if(x.c) d.style.setProperty("--c", x.c); d.style.animationDelay = (i*90)+"ms";
+    d.appendChild(insMedia(th)); const body = document.createElement("div"); body.className = "ins-body"; body.innerHTML = `<b>${esc(x.h)}</b><p>${esc(x.p)}</p>`; d.appendChild(body);
     if(el) box.replaceChild(d, el); else box.appendChild(d); });
   while(box.children.length > list.length) box.lastChild.remove();
-}
-/* hero contours: a generated terrain, drawn in once */
-function heroTopo(){
-  const svg = $("#heroTopo"); if(!svg) return; const W = 1600, H = 900, nx = 96, ny = 54; svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-  const F = (x,y)=> 60*Math.sin(x/260+.6)*Math.cos(y/210) + 38*Math.sin((x+y)/170) + 26*Math.cos(x/90 - y/140) + 0.09*x - 0.05*y;
-  const g = {nx, ny, x0:0, ytop:H, dx:W/nx, dy:H/ny, z:new Float32Array(nx*ny)};
-  for(let j=0;j<ny;j++) for(let i=0;i<nx;i++) g.z[j*nx+i] = F((i+.5)*g.dx, H-(j+.5)*g.dy);
-  const segs = contourSegs(g, 14), by = {};
-  for(const s of segs){ (by[s[4]] = by[s[4]] || []).push(`M${s[0].toFixed(0)} ${(H-s[1]).toFixed(0)}L${s[2].toFixed(0)} ${(H-s[3]).toFixed(0)}`); }
-  svg.innerHTML = Object.entries(by).map(([lv,d],i)=>`<path class="${Math.round(lv/14)%5===0?"maj ":""}draw" style="animation-delay:${(i%12)*120}ms" d="${d.join("")}"/>`).join("");
-  svg.querySelectorAll("path").forEach(p=>{ try { p.style.setProperty("--len", Math.ceil(p.getTotalLength())); } catch(e){} });
 }
 /* cursor readout on the sheet */
 function sheetHover(e){
@@ -1107,7 +1192,7 @@ function init(){
   });
   $("#reqForm").addEventListener("submit", submitRequest);
   $("#again").addEventListener("click", ()=>{ $("#reqForm").reset(); $("#reqForm").hidden = false; $("#reqDone").hidden = true; $("#loc").focus(); window.scrollTo({top:0, behavior:"smooth"}); });
-  initModelInput(); renderList(); renderMonitor(); heroTopo();
+  initModelInput(); renderList(); renderMonitor();
   const staff = /[?&]staff=1/.test(location.search); if(staff){ document.body.classList.add("staff"); unlockBrief(); }
   $("#loc").addEventListener("input", e=>{ const m = guessKind(e.target.value); if(m) guide(m); });
   $("#sheet").addEventListener("mousemove", sheetHover); $("#sheet").addEventListener("mouseleave", ()=>{ $("#cursorHud").hidden = true; });
