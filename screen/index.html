@@ -34,8 +34,8 @@
 <main>
 <section class="hero" aria-labelledby="h1">
   <img class="hero-img" src="img/hero.jpg" alt="" width="1920" height="1080" fetchpriority="high">
+  <div class="hero-reel" id="heroReel" aria-hidden="true"></div>
   <div class="hero-shade"></div>
-  <div class="hero-scan" aria-hidden="true"></div>
   <div class="hud" aria-hidden="true">
     <span class="hud-tl">Site screen · Texas</span>
     <span class="hud-tr" id="hudCoord">Lat --.----- · Lng ---.-----</span>
@@ -56,16 +56,6 @@
           <button class="btn btn-red btn-lg" id="go" type="submit"><span>Screen this site</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
         </div>
         <p class="guide" id="guide" role="status" aria-live="polite">Try an address, a pin like <code>32.9765, -96.7520</code>, a plus code or a Google Maps link.</p>
-        <div class="c-more">
-          <fieldset class="chips" id="typeSet">
-            <legend><span class="c-n">02</span>What might go here? <span class="opt">optional</span></legend>
-            <div class="chip-row" id="types"></div>
-          </fieldset>
-          <fieldset class="chips" id="stageSet">
-            <legend><span class="c-n">03</span>Where does the site stand?</legend>
-            <div class="chip-row" id="stages"></div>
-          </fieldset>
-        </div>
         <div class="c-foot">
           <p class="samples">No site handy? Open a sample: <span id="samples"></span></p>
           <button type="button" class="linkbtn" id="bulkToggle">Paste a list of sites</button>
@@ -168,6 +158,15 @@
       <div class="packet-form">
         <form id="reqForm" novalidate>
           <p class="pf-site" id="pfSite">Screen a site first, or describe it in the note.</p>
+          <fieldset class="pf-chips" id="stageSet">
+            <legend>Where are you with this site?</legend>
+            <div class="chip-row" id="stages"></div>
+          </fieldset>
+          <fieldset class="pf-chips" id="typeSet">
+            <legend>What's planned for it? <span class="opt">optional</span></legend>
+            <div class="chip-row" id="types"></div>
+          </fieldset>
+          <p class="pf-rec" id="pfRec" hidden></p>
           <div class="pf-grid">
             <label>Name<input name="name" type="text" autocomplete="name" required></label>
             <label>Work email<input name="email" type="email" autocomplete="email" required></label>
