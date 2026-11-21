@@ -477,7 +477,7 @@ function roMeter(k){ const s = RO_S; if(!s) return null; const L = s.layers, ok 
 /* each record row carries a small plat-style thumbnail drawn from that layer's own data on this tract */
 function roThumb(k, st){
   const s = RO_S; if(!s || !s.rings || !s.rings.length) return "";
-  s._th = s._th || {}; const L = s.layers, key = k + "|" + st + "|" + (L[k] ? L[k].status : "");
+  s._th = s._th || {}; const L = s.layers, key = [k, st, L[k] ? L[k].status : "", s.rings.length, s.rings.reduce((t,r)=>t+r.length,0), Math.round(s.areaSqft||0), s.added ? s.added.length : 0].join("|");
   if(s._th[key]) return s._th[key];
   const N = 52, [x0,y0,x1,y1] = bbox(s.rings), span = Math.max(x1-x0, y1-y0) * (k==="power" ? 4 : 1.7) || 600, cx = (x0+x1)/2, cy = (y0+y1)/2;
   const X = x => ((x-cx)/span + .5) * N, Y = y => (.5 - (y-cy)/span) * N;
@@ -945,7 +945,7 @@ async function restoreAssemblage(s, adds){
   await rebuildAssemblage(s);
 }
 async function rebuildAssemblage(s){
-  s.rings = s.parcels.flatMap(p=>p.ringsLL.map(r=>r.map(s.P.f))); s.areaSqft = polyArea(s.rings); s.acres = ac(s.areaSqft);
+  s._th = {}; s.rings = s.parcels.flatMap(p=>p.ringsLL.map(r=>r.map(s.P.f))); s.areaSqft = polyArea(s.rings); s.acres = ac(s.areaSqft);
   s.title = s.parcels.length>1 ? `Assemblage of ${s.parcels.length} parcels` : (s.parcels[0].situs || "Parcel " + (s.parcels[0].propId||""));
   if(s.parcels.length===1){ s.legal = s.parcels[0].legal; s.propId = s.parcels[0].propId; s.added = []; } else { s.legal = null; s.propId = s.parcels.map(p=>p.propId).join(", "); }
   s.refs = s.parcels.length===1 ? parseLegal(s.legal) : {};
