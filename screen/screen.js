@@ -1123,7 +1123,7 @@ function insights(s){
 }
 /* motion cards: each theme gets a quiet b-roll loop under its text (a drawn motif stands in until the clip loads) */
 const INS_THEME = {"Floodplain":"flood","Ground":"ground","Water features":"water","Record":"record","Assemblage":"record","Transmission":"power"};
-const INS_CLIP = {flood:"img/clips/flood.mp4", ground:"img/clips/ground.mp4", water:"img/clips/water.mp4", record:"img/clips/records.mp4"};
+const INS_CLIP = {flood:"img/clips/flood.mp4", ground:"img/clips/ground.mp4", water:"img/clips/water.mp4", power:"img/clips/power.mp4"}; /* records.mp4 joins when the file-room footage is picked */
 function insMedia(th){
   const m = document.createElement("div"); m.className = "ins-media"; m.setAttribute("aria-hidden","true");
   m.innerHTML = `<div class="ins-motif m-${th}"></div>`;
