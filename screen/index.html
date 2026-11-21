@@ -6,6 +6,20 @@
 <meta name="robots" content="noindex,nofollow">
 <title>Site Screen | Adams Surveying Company</title>
 <meta name="description" content="A free, preliminary public-record screen for Texas land, drawn on an ASC sheet: appraisal parcel, mapped floodplain, wetlands, soils, public-lidar terrain, transmission proximity and jurisdiction. Not a survey.">
+<link rel="icon" type="image/png" sizes="64x64" href="img/favicon.png">
+<link rel="apple-touch-icon" href="img/apple-touch.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Adams Surveying Company">
+<meta property="og:title" content="Site Screen | Adams Surveying Company">
+<meta property="og:description" content="A free, preliminary public-record screen for Texas land, drawn on an ASC sheet. Not a survey.">
+<meta property="og:url" content="https://txasc.github.io/ASC-Research/screen/">
+<meta property="og:image" content="https://txasc.github.io/ASC-Research/screen/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Site Screen | Adams Surveying Company">
+<meta name="twitter:description" content="A free, preliminary public-record screen for Texas land, drawn on an ASC sheet. Not a survey.">
+<meta name="twitter:image" content="https://txasc.github.io/ASC-Research/screen/img/og.jpg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@100..125,400..900&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
@@ -85,11 +99,12 @@
         <p class="kicker" id="resKind">Site screen</p>
         <h2 id="resTitle">Site</h2>
         <p class="res-sub" id="resSub"></p>
+        <p class="res-rec" id="resRec" hidden></p>
       </div>
       <div class="res-actions">
         <button class="btn btn-line" type="button" id="btnShare">Copy share link</button>
         <button class="btn btn-line" type="button" id="btnList">Add to short list</button>
-        <a class="btn btn-red" href="#packet" id="btnPacket">Email me the full packet</a>
+        <a class="btn btn-red" href="#packet" id="btnPacket">Get the full packet</a>
       </div>
     </div>
 
@@ -121,7 +136,7 @@
           <div class="model-mark" aria-hidden="true">PRELIMINARY MODEL · NOT A SURVEY</div>
           <p class="model-cap" id="modelCap"></p>
         </div>
-        <p class="sheet-note">Screen preview. The full-size sheet comes with the emailed packet. Appraisal parcel lines are not a boundary and can be off by tens of feet; every figure is approximate and from public data. Not for conveyance, design or construction.</p>
+        <p class="sheet-note">Screen preview. The full-size sheet comes with the packet. Appraisal parcel lines are not a boundary and can be off by tens of feet; every figure is approximate and from public data. Not for conveyance, design or construction.</p>
       </div>
 
       <aside class="panel" aria-label="Screen summary">
@@ -140,8 +155,8 @@
     <div class="wrap packet-grid">
       <div class="packet-copy">
         <p class="kicker">The full packet</p>
-        <h2>Get the complete screen in your inbox.</h2>
-        <p>The packet is what you forward to a partner, a lender or your engineer. A surveyor looks it over before it goes out.</p>
+        <h2>Open the complete screen.</h2>
+        <p>The packet is what you forward to a partner, a lender or your engineer. Tell us who you are and it opens right here, ready to save as a PDF. A surveyor looks over every request.</p>
         <ul class="pk-list" id="pkList">
           <li><b>Full-size sheet</b> in the same 24 × 36 layout as our survey deliverables</li>
           <li><b>Layer-by-layer findings</b> with the agency, dataset and date behind each one</li>
@@ -190,20 +205,21 @@
             <label class="check wide"><input type="checkbox" name="proposal"> Also send a proposal for survey work on this site</label>
             <label class="check wide"><input type="checkbox" name="records"> Also research the recorded deeds and plats</label>
           </div>
-          <button class="btn btn-red btn-lg" type="submit">Email me the packet</button>
+          <button class="btn btn-red btn-lg" type="submit">Open my packet</button>
           <p class="pf-fine">We use your details to send the packet and follow up on this site. Nothing is shared or sold.</p>
           <p class="notice" id="reqErr" role="alert" hidden></p>
         </form>
         <div class="done" id="reqDone" hidden tabindex="-1">
-          <p class="kicker">Packet requested</p>
-          <h3 id="doneH">It's on the way.</h3>
+          <p class="kicker">Packet open</p>
+          <h3 id="doneH">Your packet is open below.</h3>
           <ol class="next">
-            <li><strong>A surveyor checks the screen</strong> so the packet reads correctly for this site.</li>
-            <li><strong>The packet reaches <span id="doneEmail">your inbox</span></strong>, usually within one business day.</li>
+            <li><strong>Save it now.</strong> The sheet and the full brief are unlocked on this screen. Save them as a PDF to forward to your team.</li>
+            <li><strong>A surveyor looks it over.</strong> Your request comes straight to our office. If anything on the screen reads wrong for this site, we'll reach you at <span id="doneEmail">your email</span>.</li>
             <li><strong>If you asked for a proposal,</strong> it comes as a separate written scope and price. Nothing is ordered until you approve it.</li>
           </ol>
-          <p>The full brief is open on this screen now. Questions in the meantime: <a href="tel:+14693170250">(469) 317-0250</a> or <a href="mailto:surveytx@txasc.com">surveytx@txasc.com</a>.</p>
-          <button class="btn btn-line" type="button" id="again">Screen another site</button>
+          <p>Questions in the meantime: <a href="tel:+14693170250">(469) 317-0250</a> or <a href="mailto:surveytx@txasc.com">surveytx@txasc.com</a>.</p>
+          <div class="done-act"><button class="btn btn-red" type="button" id="btnSavePdf">Save sheet and brief as PDF</button>
+          <button class="btn btn-line" type="button" id="again">Screen another site</button></div>
         </div>
       </div>
     </div>
@@ -241,7 +257,7 @@
     <div class="sl-head">
       <div><p class="kicker">Compare</p><h2 id="slH">Your short list</h2></div>
       <div class="sl-actions">
-        <a class="btn btn-red" href="#packet" id="slPacket">Email me the list</a>
+        <a class="btn btn-red" href="#packet" id="slPacket">Get the list packet</a>
         <button class="linkbtn" type="button" id="slClear">Clear the list</button>
       </div>
     </div>
@@ -287,7 +303,7 @@
 
 <div class="noprint" aria-hidden="true">
   <img src="img/sheet-logo.png" alt="" width="80" height="149">
-  <p><strong>This preview doesn't print.</strong> The full packet, with the full-size sheet, is emailed from the Site Screen page.</p>
+  <p><strong>This preview doesn't print.</strong> The full packet, with the full-size sheet, opens on the Site Screen page once you add your contact details.</p>
   <p>Adams Surveying Company · (469) 317-0250 · surveytx@txasc.com</p>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
