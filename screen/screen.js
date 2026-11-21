@@ -51,6 +51,7 @@ const sig2 = n => { if(!n) return 0; const p = Math.pow(10, Math.floor(Math.log1
 const ac = sqft => sqft / SQFT_AC;
 const acTxt = a => a >= 100 ? fmt(a,0) : a >= 10 ? fmt(a,1) : fmt(a,2);
 const today = () => new Date().toLocaleDateString("en-US", {month:"short", day:"numeric", year:"numeric"});
+function safeReplace(a,b,u){ try { history.replaceState(a,b,u); } catch(e){} }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const nul = v => (v == null || v === "Null" || v === "") ? null : v;
 
@@ -193,11 +194,13 @@ function parseTiff(buf){
 }
 
 /* ===== Live lookups (each fails closed on its own) ===== */
+function fmtAddr(t){ const m = String(t).replace(/(\d{5})\d{4}\s*$/,"$1").split(/\s*,\s*/).filter(Boolean); if(!m.length) return null;
+  return m.map(x=>/^(TX|TEXAS)(\s+\d{5})?$/i.test(x) ? x.toUpperCase().replace("TEXAS","TX") : titleCase(x)).join(", "); }
 function normParcel(r){
   const a = {}; for(const [k,v] of Object.entries(r.attributes||{})) a[k.toUpperCase()] = (v === "Null" || v === "") ? null : v;
   const rings = (r.geometry && r.geometry.rings) || [];
   return { oid:a.OBJECTID, propId:a.PROP_ID, county:a.COUNTY, legal:a.LEGAL_DESC, legalAcres:+a.LEGAL_AREA || null,
-    situs:a.SITUS_ADDR ? a.SITUS_ADDR.replace(/\s+,/g,",").replace(/(\d{5})\d{4}$/,"$1") : null, source:a.SOURCE, taxYear:a.TAX_YEAR, ringsLL:rings };
+    situs:a.SITUS_ADDR ? fmtAddr(a.SITUS_ADDR) : null, source:a.SOURCE, taxYear:a.TAX_YEAR, ringsLL:rings };
 }
 async function fetchParcelAt(p){
   const d = 0.003, ext = [p.lng-d, p.lat-d, p.lng+d, p.lat+d].join(",");
@@ -208,7 +211,7 @@ async function fetchParcelAt(p){
 async function fetchNeighbors(env, exceptOid){
   const j = await getJSON(CONFIG.parcels + "/identify?" + qs({geometry:env.join(","), geometryType:"esriGeometryEnvelope", sr:4326, layers:"all:0", tolerance:0,
     mapExtent:env.join(","), imageDisplay:"800,800,96", returnGeometry:true, maxAllowableOffset:0.000004, f:"json"}), {}, 20000);
-  return (j.results||[]).map(normParcel).filter(p => p.oid !== exceptOid && p.ringsLL.length);
+  const seen = new Set(); return (j.results||[]).map(normParcel).filter(p => { if(p.oid === exceptOid || !p.ringsLL.length || seen.has(p.oid)) return false; seen.add(p.oid); return true; });
 }
 async function fetchFlood(envLL, ptLL){
   const base = CONFIG.fema + "/query?";
@@ -466,7 +469,7 @@ function renderReadout(s){
   const parcelSub = s.sample ? "Illustrative sample, not a real parcel" : s.sketch ? "Your sketched outline" : `Appraisal record ${s.propId?("#"+esc(s.propId)):""} &middot; ${esc(titleCase(s.source||""))}${s.taxYear?(" "+esc(s.taxYear)):""}`;
   rows.push(readoutRow("parcel", s.added.length ? "Assemblage" : "Parcel", `${acTxt(s.acres)} acres <span class="opt" style="color:#93aab8">(GIS, approx.)</span>`, parcelSub + (s.legalAcres && !s.added.length ? ` &middot; ${fmt(s.legalAcres,2)} ac on the appraisal roll` : ""), "ok"));
   const f = L.flood; rows.push(readoutRow("flood","FEMA floodplain", f && f.status==="ok" ? (f.shareSFHA>0.005 ? `About ${fmt(f.shareSFHA*100,0)}% in the mapped 1% annual-chance floodplain` : "Outside the mapped 1% annual-chance floodplain") : esc(failText(f)),
-    f && f.status==="ok" ? `Approximately ${fmt((1-f.shareSFHA)*100,0)}% of the tract is outside the mapped floodplain${f.shareFloodway>0.005?`; about ${fmt(f.shareFloodway*100,0)}% in mapped floodway`:""}. From an aligned FEMA map overlay, not an elevation survey.` : "", stateOf(s,"flood")));
+    f && f.status==="ok" ? (f.shareSFHA>0.005 ? `Approximately ${fmt((1-f.shareSFHA)*100,0)}% of the tract is outside mapped floodplain${f.shareFloodway>0.005?`; about ${fmt(f.shareFloodway*100,0)}% in mapped floodway`:""}. ` : "") + "From an aligned FEMA map overlay, not an elevation survey." : "", stateOf(s,"flood")));
   const w = L.wet; rows.push(readoutRow("wet","Wetlands (NWI)", w && w.status==="ok" ? (w.share>0.002 ? `About ${fmt(w.share*100,1)}% mapped as wetland or water` : w.nearby ? "None mapped on the tract; some nearby" : "None mapped on or near the tract") : esc(failText(w)),
     w && w.status==="ok" && w.typesOnTract.length ? esc(w.typesOnTract.join(", ")) + ". A mapped indicator, not a delineation." : w && w.status==="ok" ? "A mapped indicator, not a delineation." : "", stateOf(s,"wet")));
   const wa = L.water; rows.push(readoutRow("water","Mapped streams", wa && wa.status==="ok" ? (wa.crossing ? "A mapped stream or water body touches the tract" : "None mapped across the tract") : esc(failText(wa)), wa && wa.status==="ok" && wa.names && wa.names.length ? esc(wa.names.slice(0,2).join(", ")) : "", stateOf(s,"water")));
@@ -593,7 +596,7 @@ function drawSheet(s){
   const tx = 840, tw = 240; let ty = 10;
   o.push(`<rect x="${tx}" y="10" width="${tw}" height="730" fill="#0E1F2D"/>`);
   o.push(`<image href="img/logo.png" x="${tx+16}" y="${ty+14}" width="130" height="50"/>`); ty += 82;
-  const tline = (txt, size, col, weight=400, fam="IBM Plex Sans, sans-serif") => { const lines = wrapTxt(txt, Math.floor(tw*1.9/size)); const r = lines.map((l,i)=>`<text x="${tx+16}" y="${ty+i*(size+4)}" font-family="${fam}" font-size="${size}" font-weight="${weight}" fill="${col}">${esc(l)}</text>`).join(""); ty += lines.length*(size+4); return r; };
+  const tline = (txt, size, col, weight=400, fam="IBM Plex Sans, sans-serif") => { const lines = wrapTxt(txt, Math.floor(tw*(fam.startsWith("Monda")||fam.includes("Mono")?1.5:1.85)/size)); const r = lines.map((l,i)=>`<text x="${tx+16}" y="${ty+i*(size+4)}" font-family="${fam}" font-size="${size}" font-weight="${weight}" fill="${col}">${esc(l)}</text>`).join(""); ty += lines.length*(size+4); return r; };
   o.push(tline("PRELIMINARY SITE SCREEN", 13, "#f2b9ba", 600, "IBM Plex Mono, monospace")); ty += 4;
   o.push(tline(s.title || "Site", 16, "#fff", 700, "Monda, sans-serif")); ty += 2;
   o.push(tline(s.area || "", 11.5, "#a9bdc8")); ty += 10;
@@ -764,8 +767,8 @@ async function screen(raw, {quiet=false}={}){
     if(my !== RUN) return null;
     current = s; renderSite(s);
     if(!quiet) setTimeout(()=>$("#results").scrollIntoView({behavior:"smooth", block:"start"}), 80);
-    if(!s.sample){ history.replaceState(null, "", shareURL(s)); await screenLayers(s); if(s === current){ renderBrief(s); renderReadout(s); } }
-    else history.replaceState(null, "", location.pathname + "?" + qs({loc:raw, ...(TYPE?{type:TYPE}:{}) , stage:STAGE}));
+    if(!s.sample){ safeReplace(null, "", shareURL(s)); await screenLayers(s); if(s === current){ renderBrief(s); renderReadout(s); } }
+    else safeReplace(null, "", location.pathname + "?" + qs({loc:raw, ...(TYPE?{type:TYPE}:{}) , stage:STAGE}));
     return s;
   } catch(e){
     if(my !== RUN) return null;
@@ -781,7 +784,9 @@ function offerSketch(center){
   const P = proj(center), half = 900, ring = [[-half,-half],[half,-half],[half,half],[-half,half]];
   const base = newSite({sample:false, sketch:true, input:"sketch", kind:"Sketch", center, P, rings:[ring.map(p=>[p[0]/50,p[1]/50])], county:null, legal:null, area:"Texas", parcels:[]});
   base.frame = [-half,-half*700/800,half,half*700/800]; base.title = "Sketch a tract here"; base.layers = {aerial:{status:"na"}};
-  current = base; $("#results").hidden = false; renderSite(base); startSketch();
+  current = base; $("#results").hidden = false; renderSite(base); $("#brief").innerHTML = ""; $("#adjBox").hidden = true;
+  $("#readout").innerHTML = '<li><span class="st na" aria-hidden="true"></span><div><div class="ro-k">No parcel at that point</div><div class="ro-v">Sketch the tract on the aerial</div><div class="ro-s">Click the corners on the sheet, then choose Screen this outline. Every layer runs on your outline.</div></div></li>';
+  startSketch();
   $("#results").scrollIntoView({behavior:"smooth"});
 }
 
@@ -794,7 +799,7 @@ async function finishSketch(){
   const base = SKETCH.base, pts = SKETCH.pts.slice(); endSketch();
   if(ringArea(pts) < 0) pts.reverse();
   const s = siteFromSketch(pts, base); RUN++; current = s; renderSite(s);
-  history.replaceState(null, "", location.pathname + "?" + qs({sketch:s.sketchLL.map(p=>p[1].toFixed(6)+","+p[0].toFixed(6)).join(";"), ...(TYPE?{type:TYPE}:{}), stage:STAGE}));
+  safeReplace(null, "", location.pathname + "?" + qs({sketch:s.sketchLL.map(p=>p[1].toFixed(6)+","+p[0].toFixed(6)).join(";"), ...(TYPE?{type:TYPE}:{}), stage:STAGE}));
   await screenLayers(s); if(s===current){ renderBrief(s); renderReadout(s); }
 }
 
