@@ -843,7 +843,7 @@ function shareURL(s){ const base = location.origin + location.pathname;
   if(s.sketch) return base + "?" + qs({sketch:s.sketchLL.map(p=>p[1].toFixed(6)+","+p[0].toFixed(6)).join(";"), ...(TYPE?{type:TYPE}:{}), stage:STAGE});
   const ip = p => { const P = proj(s.center), ll = P.i(interiorPoint(p.ringsLL.map(x=>x.map(P.f)))); return ll[1].toFixed(6)+","+ll[0].toFixed(6); };
   const moved = !s.sample && s.parcels && s.parcels.length && String(s.parcels[0].oid) !== String(s.oid);
-  const loc = s.sample ? "sample:"+s.sampleId : moved ? ip(s.parcels[0]) : (s.kind==="Address" ? s.input : `${s.center.lat.toFixed(6)}, ${s.center.lng.toFixed(6)}`);
+  const loc = s.sample ? "sample:"+s.sampleId : moved ? ip(s.parcels[0]) : (s.kind==="Address" ? s.input : s.parcels && s.parcels.length ? ip(s.parcels[0]) : `${s.center.lat.toFixed(6)}, ${s.center.lng.toFixed(6)}`);
   const add = !s.sample && s.parcels && s.parcels.length > 1 ? s.parcels.slice(1).map(p=>{ const P = proj(s.center), r = p.ringsLL.map(x=>x.map(P.f)), ll = P.i(interiorPoint(r)); return ll[1].toFixed(6)+","+ll[0].toFixed(6); }).join(";") : null;
   return base + "?" + qs({loc, ...(add?{add}:{}), ...(TYPE?{type:TYPE}:{}), stage:STAGE}); }
 
