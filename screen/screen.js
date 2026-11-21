@@ -141,6 +141,9 @@ function inRings(x,y,rings){ let inside=false;
 function bbox(rings){ let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity; for(const r of rings) for(const [x,y] of r){ if(x<x0)x0=x; if(y<y0)y0=y; if(x>x1)x1=x; if(y>y1)y1=y; } return [x0,y0,x1,y1]; }
 function centroid(rings){ let A=0,cx=0,cy=0; for(const r of rings) for(let i=0;i<r.length;i++){ const [x1,y1]=r[i],[x2,y2]=r[(i+1)%r.length], f=x1*y2-x2*y1; A+=f; cx+=(x1+x2)*f; cy+=(y1+y2)*f; }
   if(Math.abs(A)<1e-9){ const b=bbox(rings); return [(b[0]+b[2])/2,(b[1]+b[3])/2]; } return [cx/(3*A), cy/(3*A)]; }
+function interiorPoint(rings){ const c = centroid(rings); if(inRings(c[0],c[1],rings)) return c; const [x0,y0,x1,y1] = bbox(rings); let best = null, bd = Infinity;
+  for(let i=1;i<24;i++) for(let j=1;j<24;j++){ const x = x0+(x1-x0)*i/24, y = y0+(y1-y0)*j/24; if(!inRings(x,y,rings)) continue; const d = Math.hypot(x-c[0], y-c[1]); if(d<bd){ bd=d; best=[x,y]; } }
+  return best || c; }
 function segDist(px,py,a,b){ const dx=b[0]-a[0], dy=b[1]-a[1], l=dx*dx+dy*dy||1; let t=((px-a[0])*dx+(py-a[1])*dy)/l; t=Math.max(0,Math.min(1,t)); return Math.hypot(px-a[0]-t*dx, py-a[1]-t*dy); }
 function segsCross(a,b,c,d){ const o=(p,q,r)=>Math.sign((q[0]-p[0])*(r[1]-p[1])-(q[1]-p[1])*(r[0]-p[0])); return o(a,b,c)!==o(a,b,d) && o(c,d,a)!==o(c,d,b); }
 function lineToPolyDist(path, rings){ // 0 when the line enters the polygon
@@ -815,25 +818,39 @@ async function toggleNeighbor(oid){
   const inSet = s.parcels.find(p=>String(p.oid)===String(oid));
   if(inSet){ if(s.parcels.length===1) return; s.parcels = s.parcels.filter(p=>p!==inSet); s.added = s.added.filter(o=>String(o)!==String(oid)); }
   else { const n = (s.layers.adj && s.layers.adj.items || []).find(n=>String(n.oid)===String(oid)); if(!n) return; s.parcels.push(n); s.added.push(n.oid); s.layers.adj.items = s.layers.adj.items.filter(x=>x!==n); }
+  await rebuildAssemblage(s);
+}
+
+async function restoreAssemblage(s, adds){
+  let added = 0;
+  for(const [lat,lng] of adds){ if(s !== current) return;
+    try { const p = await fetchParcelAt({lat,lng}); if(p && !s.parcels.some(x=>String(x.oid)===String(p.oid))){ s.parcels.push(p); s.added.push(p.oid); added++; } } catch(e){} }
+  if(!added || s !== current) return;
+  if(s.layers.adj && s.layers.adj.items){ const ids = new Set(s.parcels.map(p=>String(p.oid))); s.layers.adj.items = s.layers.adj.items.filter(n=>!ids.has(String(n.oid))); }
+  await rebuildAssemblage(s);
+}
+async function rebuildAssemblage(s){
   s.rings = s.parcels.flatMap(p=>p.ringsLL.map(r=>r.map(s.P.f))); s.areaSqft = polyArea(s.rings); s.acres = ac(s.areaSqft);
   s.title = s.parcels.length>1 ? `Assemblage of ${s.parcels.length} parcels` : (s.parcels[0].situs || "Parcel " + (s.parcels[0].propId||""));
   if(s.parcels.length===1){ s.legal = s.parcels[0].legal; s.propId = s.parcels[0].propId; s.added = []; } else { s.legal = null; s.propId = s.parcels.map(p=>p.propId).join(", "); }
   s.refs = s.parcels.length===1 ? parseLegal(s.legal) : {};
-  // keep the frame unless the assemblage outgrows it
   const nb = bbox(s.rings), fr = s.frame; if(nb[0]<fr[0]||nb[1]<fr[1]||nb[2]>fr[2]||nb[3]>fr[3]) s.frame = frameFor(s.rings);
-  renderSite(s); await screenLayers(s, ["flood","wet","water","soils","terrain","power"]); if(s===current){ renderBrief(s); renderReadout(s); }
+  renderSite(s); safeReplace(null, "", shareURL(s)); await screenLayers(s, ["flood","wet","water","soils","terrain","power"]); if(s===current){ renderBrief(s); renderReadout(s); }
 }
 
 /* ===== Share link ===== */
 function shareURL(s){ const base = location.origin + location.pathname;
   if(s.sketch) return base + "?" + qs({sketch:s.sketchLL.map(p=>p[1].toFixed(6)+","+p[0].toFixed(6)).join(";"), ...(TYPE?{type:TYPE}:{}), stage:STAGE});
-  const loc = s.sample ? "sample:"+s.sampleId : (s.kind==="Address" ? s.input : `${s.center.lat.toFixed(6)}, ${s.center.lng.toFixed(6)}`);
-  return base + "?" + qs({loc, ...(TYPE?{type:TYPE}:{}), stage:STAGE}); }
+  const ip = p => { const P = proj(s.center), ll = P.i(interiorPoint(p.ringsLL.map(x=>x.map(P.f)))); return ll[1].toFixed(6)+","+ll[0].toFixed(6); };
+  const moved = !s.sample && s.parcels && s.parcels.length && String(s.parcels[0].oid) !== String(s.oid);
+  const loc = s.sample ? "sample:"+s.sampleId : moved ? ip(s.parcels[0]) : (s.kind==="Address" ? s.input : `${s.center.lat.toFixed(6)}, ${s.center.lng.toFixed(6)}`);
+  const add = !s.sample && s.parcels && s.parcels.length > 1 ? s.parcels.slice(1).map(p=>{ const P = proj(s.center), r = p.ringsLL.map(x=>x.map(P.f)), ll = P.i(interiorPoint(r)); return ll[1].toFixed(6)+","+ll[0].toFixed(6); }).join(";") : null;
+  return base + "?" + qs({loc, ...(add?{add}:{}), ...(TYPE?{type:TYPE}:{}), stage:STAGE}); }
 
 /* ===== Short list (this browser only) ===== */
 function loadList(){ try { return JSON.parse(localStorage.getItem("ascScreenList")||"[]"); } catch(e){ return []; } }
 function saveList(){ try { localStorage.setItem("ascScreenList", JSON.stringify(LIST)); } catch(e){} renderList(); }
-const listKey = s => s.sample ? "sample:"+s.sampleId : s.sketch ? "sketch:"+s.sketchLL.map(p=>p[0].toFixed(5)).join("") : "p:"+s.parcels.map(p=>p.oid).sort().join("+");
+const listKey = s => s.sample ? "sample:"+s.sampleId : s.sketch ? "sketch:"+(s.sketchLL||[]).map(p=>p[1].toFixed(6)+","+p[0].toFixed(6)).join(";") : "p:"+s.parcels.map(p=>p.oid).sort().join("+");
 function summary(s){ const L = s.layers, ok = k => L[k] && L[k].status==="ok";
   return { key:listKey(s), title:s.title, area:s.area, sample:!!s.sample, acres:+s.acres.toFixed(2),
     flood: ok("flood") ? +(L.flood.shareSFHA*100).toFixed(0) : null, floodway: ok("flood") ? +(L.flood.shareFloodway*100).toFixed(0) : null,
@@ -943,7 +960,9 @@ function init(){
   const u = new URLSearchParams(location.search);
   if(u.get("type") && ICON[u.get("type")]) setType(u.get("type"), true);
   if(u.get("stage") && STAGES.some(s=>s[0]===u.get("stage"))) setStage(u.get("stage"));
-  if(u.get("loc")){ $("#loc").value = /^sample:/.test(u.get("loc")) ? "" : u.get("loc"); screen(u.get("loc")); }
+  if(u.get("loc")){ $("#loc").value = /^sample:/.test(u.get("loc")) ? "" : u.get("loc");
+    const adds = (u.get("add")||"").split(";").map(t=>t.split(",").map(Number)).filter(p=>p.length===2&&p.every(isFinite)).slice(0,25);
+    screen(u.get("loc")).then(s=>{ if(s && adds.length) restoreAssemblage(s, adds); }); }
   else if(u.get("sketch")){ const pts = u.get("sketch").split(";").map(t=>t.split(",").map(Number)).filter(p=>p.length===2&&p.every(isFinite)).map(([la,lo])=>[lo,la]);
     if(pts.length>=3){ const c = {lat:pts.reduce((t,p)=>t+p[1],0)/pts.length, lng:pts.reduce((t,p)=>t+p[0],0)/pts.length}, P = proj(c);
       const base = {P, county:null, area:"Texas"}; const s = siteFromSketch(pts.map(P.f), base); current = s; renderSite(s); screenLayers(s).then(()=>{ if(s===current){ renderBrief(s); renderReadout(s); } }); } }
