@@ -1029,14 +1029,21 @@ const WF = [
   {id:"exhibit",t:"Drafting the exhibit",        d:"Laying it out on the ASC sheet",        keys:"all",      ico:"sheet"}
 ];
 const LST = {}, MON_T = {}, WF_T = {};
+/* a sketched outline has no appraisal record: once its layers start, the record steps count as done */
+function lst(k){ const v = LST[k] || "idle"; if(k==="parcel" && v==="idle" && current && current.sketch && STEPS.some(([x])=>x!=="parcel" && LST[x] && LST[x]!=="idle")) return "ok"; return v; }
 function wfState(step){
-  const keys = step.keys === "all" ? STEPS.map(x=>x[0]) : step.keys, st = keys.map(k=>LST[k]||"idle");
-  if(step.keys === "all"){ if(st.every(x=>x==="idle")) return "idle"; return st.some(x=>x==="wait"||x==="idle") ? (LST.parcel==="ok"?"wait":"idle") : "ok"; }
+  const keys = step.keys === "all" ? STEPS.map(x=>x[0]) : step.keys, st = keys.map(lst);
+  if(step.keys === "all"){ if(st.every(x=>x==="idle")) return "idle"; return st.some(x=>x==="wait"||x==="idle") ? (lst("parcel")==="ok"?"wait":"idle") : "ok"; }
   if(st.some(x=>x==="wait")) return "wait"; if(st.every(x=>x==="idle")) return "idle";
-  if(st.every(x=>x==="ok"||x==="na")) return "ok"; return st.some(x=>x==="ok") ? "ok" : "fail";
+  if(st.every(x=>x==="ok"||x==="na")) return "ok"; return st.some(x=>x==="ok"||x==="na") ? "part" : "fail";
 }
+const WF_SRC_NAME = {wet:"wetlands map", water:"stream map", power:"transmission map", juris:"city limits map"};
 function wfDetail(step, s){
-  if(!s) return step.d; const L = s.layers, ok = k => L[k] && L[k].status==="ok", r = s.refs || {};
+  if(!s) return step.d;
+  if(Array.isArray(step.keys) && step.keys.length > 1){ const miss = step.keys.filter(k=>lst(k)==="fail").map(k=>WF_SRC_NAME[k]||k);
+    if(miss.length){ const rest = wfDetail0(step, s); return (rest && rest !== step.d ? rest + " · " : "") + miss.join(", ") + " did not answer"; } }
+  return wfDetail0(step, s); }
+function wfDetail0(step, s){ const L = s.layers, ok = k => L[k] && L[k].status==="ok", r = s.refs || {};
   switch(step.id){
     case "rec": return s.sample ? "Illustrative sample record" : s.sketch ? "Sketched outline, no record attached" : [s.propId && "ID " + s.propId, r.abstract && "Abstract " + r.abstract, r.lot && "Lot " + r.lot, r.block && "Block " + r.block].filter(Boolean).slice(0,3).join(" · ") || (s.county ? titleCase(s.county) + " County roll" : step.d);
     case "sketch": return `${acTxt(s.acres)} acres ± · ${s.rings.reduce((t,x)=>t+x.length,0)} vertices`;
@@ -1051,7 +1058,7 @@ function wfDetail(step, s){
 }
 function wfHTML(step, s, compact, st){
   st = st || wfState(step); const t = WF_T[step.id];
-  const ms = st==="wait" ? "on it" : st==="ok" ? (t && +t >= 0.2 ? t + " s" : "done") : st==="fail" ? "no answer" : "queued";
+  const ms = st==="wait" ? "on it" : st==="ok" ? (t && +t >= 0.2 ? t + " s" : "done") : st==="part" ? "partial" : st==="fail" ? "no answer" : "queued";
   return `<li class="wf ${st}" data-id="${step.id}"><span class="wf-ico" aria-hidden="true"><svg viewBox="0 0 24 24">${WF_ICO[step.ico]}</svg></span>
     <span class="wf-txt"><span class="wf-t">${esc(step.t)}</span>${compact?"":`<span class="wf-d">${esc(st==="idle"||st==="wait"?step.d:wfDetail(step, s))}</span>`}</span><span class="wf-ms">${ms}</span></li>`;
 }
@@ -1059,13 +1066,13 @@ function wfHTML(step, s, compact, st){
 let WF_SHOWN = 0, WF_TICK = 0;
 function wfShown(i){ const real = wfState(WF[i]); if(i < WF_SHOWN) return real; if(i === WF_SHOWN && WF.some(w=>wfState(w)!=="idle")) return "wait"; return "idle"; }
 function wfAdvance(){ WF_TICK = 0; if(WF_SHOWN >= WF.length) return; const r = wfState(WF[WF_SHOWN]);
-  if(r === "ok" || r === "fail"){ WF_SHOWN++; paintWorkflow(); }
+  if(r === "ok" || r === "part" || r === "fail"){ WF_SHOWN++; paintWorkflow(); }
   if(WF_SHOWN < WF.length && WF.some(w=>wfState(w)!=="idle")) WF_TICK = setTimeout(wfAdvance, matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 520); }
 function renderWorkflow(){
-  WF.forEach(w=>{ const st = wfState(w); if(st==="wait" && !WF_T["_"+w.id]) WF_T["_"+w.id] = performance.now(); if(st==="ok" && WF_T["_"+w.id] && !WF_T[w.id]) WF_T[w.id] = ((performance.now()-WF_T["_"+w.id])/1000).toFixed(1); });
+  WF.forEach(w=>{ const st = wfState(w); if(st==="wait" && !WF_T["_"+w.id]) WF_T["_"+w.id] = performance.now(); if((st==="ok"||st==="part") && WF_T["_"+w.id] && !WF_T[w.id]) WF_T[w.id] = ((performance.now()-WF_T["_"+w.id])/1000).toFixed(1); });
   paintWorkflow(); if(!WF_TICK) WF_TICK = setTimeout(wfAdvance, 260); }
 function paintWorkflow(){
-  const s = current, sts = WF.map((w,i)=>wfShown(i)), done = sts.filter(x=>x==="ok"||x==="fail").length, busy = sts.some(x=>x==="wait");
+  const s = current, sts = WF.map((w,i)=>wfShown(i)), done = sts.filter(x=>x==="ok"||x==="part"||x==="fail").length, busy = sts.some(x=>x==="wait");
   const row = (w,i,c) => wfHTML(w, s, c, sts[i]);
   const m = $("#monList"); if(m) m.innerHTML = WF.map((w,i)=>row(w,i,false)).join("");
   const strip = $("#wfStrip"); if(strip) strip.innerHTML = WF.map((w,i)=>row(w,i,true)).join("");
