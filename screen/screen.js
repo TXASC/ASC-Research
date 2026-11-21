@@ -224,7 +224,10 @@ async function fetchFlood(envLL, ptLL){
     returnGeometry:true, outSR:4326, geometryPrecision:6, maxAllowableOffset:0.000005, f:"json"}), {}, 25000);
   const feats = (g.features||[]).filter(f=>f.geometry && f.geometry.rings);
   const a = pt.features && pt.features[0] && pt.features[0].attributes;
-  return { pointZone: a ? zoneName(a) : null, panel: a && a.DFIRM_ID,
+  // FIRM panel and its effective date (layer 3), best effort: the zone read does not depend on it
+  let firm = null; try { const fp = await getJSON(CONFIG.fema.replace(/\/\d+$/,"/3") + "/query?" + qs({geometry:ptLL.join(","), geometryType:"esriGeometryPoint", inSR:4326, spatialRel:"esriSpatialRelIntersects", outFields:"FIRM_PAN,EFF_DATE", returnGeometry:false, f:"json"}), {}, 12000);
+    const fa = fp.features && fp.features[0] && fp.features[0].attributes; if(fa) firm = {no:fa.FIRM_PAN||null, eff:fa.EFF_DATE ? new Date(fa.EFF_DATE).toLocaleDateString("en-US",{year:"numeric",month:"short",day:"numeric",timeZone:"UTC"}) : null}; } catch(_){}
+  return { pointZone: a ? zoneName(a) : null, panel: a && a.DFIRM_ID, firm,
     polys: feats.map(f => ({zone:zoneName(f.attributes), sfha:f.attributes.SFHA_TF==="T", floodway:/FLOODWAY/i.test(f.attributes.ZONE_SUBTY||""), ringsLL:f.geometry.rings})) };
 }
 function zoneName(a){ if(!a) return null; if(/FLOODWAY/i.test(a.ZONE_SUBTY||"")) return "AE floodway"; if(/0\.2/.test(a.ZONE_SUBTY||"")) return "X (0.2% annual chance)"; if(a.FLD_ZONE==="X") return "X (minimal)"; return a.FLD_ZONE; }
@@ -444,10 +447,13 @@ async function screenLayers(s, only){
   const [x0,y0,x1,y1] = s.frame, a = s.P.i([x0,y0]), b = s.P.i([x1,y1]), env = [a[0],a[1],b[0],b[1]];
   const c = s.center, toFt = rr => rr.map(r=>r.map(s.P.f));
   const job = async (key, fn) => { if(only && !only.includes(key)) return; setStatus(key,"wait"); L[key] = {status:"wait"}; renderReadout(s);
-    try { L[key] = {status:"ok", ...(await fn())}; } catch(e){ L[key] = {status:"fail", err:String(e.message||e)}; }
+    for(let n = 0; ; n++){ try { L[key] = {status:"ok", ...(await fn())}; break; }
+      catch(e){ const msg = String(e.message||e), final = /no elevation cells/.test(msg);
+        if(final || n >= 2 || s !== current){ L[key] = {status:"fail", err:msg}; break; }
+        await new Promise(r=>setTimeout(r, 800 * 2**n + Math.random()*500)); } }
     if(s !== current) return; setStatus(key, L[key].status); renderReadout(s); drawSheet(s); renderInsights(s); };
   const tasks = [
-    job("flood", async()=>{ const f = await fetchFlood(env, [c.lng,c.lat]); const polys = f.polys.map(p=>({...p, rings:toFt(p.ringsLL)})); return {polys, pointZone:f.pointZone, panel:f.panel, ...floodStats(s, polys)}; }),
+    job("flood", async()=>{ const f = await fetchFlood(env, [c.lng,c.lat]); const polys = f.polys.map(p=>({...p, rings:toFt(p.ringsLL)})); return {polys, pointZone:f.pointZone, panel:f.panel, firm:f.firm, ...floodStats(s, polys)}; }),
     job("wet", async()=>{ const w = await fetchWetlands(env); const polys = w.map(p=>({...p, rings:toFt(p.ringsLL)})); return {polys, ...wetStats(s, polys)}; }),
     job("water", async()=>{ const w = await fetchWater(env); const items = w.map(i=>({name:i.name, paths:i.paths?toFt(i.paths):null, rings:i.ringsLL?toFt(i.ringsLL):null}));
       const crossing = items.some(i=>(i.paths||[]).some(p=>lineToPolyDist(p, s.rings)===0) || (i.rings||[]).some(r=>r.some(([x,y])=>inRings(x,y,s.rings))));
@@ -505,12 +511,17 @@ function readoutRow(k, label, value, sub, st){
   const [ico, src, c] = RO_META[k] || ["sheet","",""], m = roMeter(k), sig = value + "|" + st, fresh = RO_PREV[k] !== undefined && RO_PREV[k] !== sig && st==="ok"; RO_PREV[k] = sig;
   return `<li class="ro ${st}${fresh?" fresh":""}" style="--c:${c}"><span class="ro-ico" aria-hidden="true">${roThumb(k, st) || `<svg viewBox="0 0 24 24">${WF_ICO[ico]}</svg>`}<span class="st ${st}"></span></span><div class="ro-body"><div class="ro-k">${esc(label)}<span class="ro-src">${esc(src)}</span></div><div class="ro-v">${value}</div>${m?`<div class="ro-m" title="${esc(m.lab)}"><i style="width:${Math.max(2,Math.round(m.v*100))}%"></i></div>`:""}${sub?`<div class="ro-s">${sub}</div>`:""}</div></li>`; }
 function failText(l){ return l && l.status==="fail" ? "The public service didn't answer, so this layer is left off. Nothing was assumed." : "Loading…"; }
+async function retryMissing(){ const s = current; if(!s) return; const keys = STEPS.map(x=>x[0]).filter(k=>k!=="parcel" && s.layers[k] && s.layers[k].status==="fail");
+  if(s.layers.adj && s.layers.adj.status==="fail") keys.push("adj"); if(!keys.length) return; toast("Asking the public services again…");
+  await screenLayers(s, keys); if(s===current){ renderBrief(s); renderReadout(s); renderInsights(s); } }
+function renderRetry(s){ const b = $("#retryBox"); if(!b) return; const miss = STEPS.filter(([k])=>k!=="parcel" && s.layers[k] && s.layers[k].status==="fail");
+  b.hidden = !miss.length || s.sample; if(miss.length) $("#retryTxt").textContent = `${miss.length===1?"One public service":miss.length+" public services"} didn't answer: ${miss.map(x=>x[1]).join(", ")}.`; }
 function renderReadout(s){
-  RO_S = s; const L = s.layers, rows = [];
+  RO_S = s; renderRetry(s); const L = s.layers, rows = [];
   const parcelSub = s.sample ? "Illustrative sample, not a real parcel" : s.sketch ? "Your sketched outline" : `Appraisal record ${s.propId?("#"+esc(s.propId)):""} &middot; ${esc(titleCase(s.source||""))}${s.taxYear?(" "+esc(s.taxYear)):""}`;
   rows.push(readoutRow("parcel", s.added.length ? "Assemblage" : "Parcel", `${acTxt(s.acres)} acres <span class="opt">(GIS, approx.)</span>`, parcelSub + (s.legalAcres && !s.added.length ? ` &middot; ${fmt(s.legalAcres,2)} ac on the appraisal roll` : ""), "ok"));
   const f = L.flood; rows.push(readoutRow("flood","FEMA floodplain", f && f.status==="ok" ? (f.shareSFHA>0.005 ? `About ${fmt(f.shareSFHA*100,0)}% in the mapped 1% annual-chance floodplain` : "Outside the mapped 1% annual-chance floodplain") : esc(failText(f)),
-    f && f.status==="ok" ? (f.shareSFHA>0.005 ? `Approximately ${fmt((1-f.shareSFHA)*100,0)}% of the tract is outside mapped floodplain${f.shareFloodway>0.005?`; about ${fmt(f.shareFloodway*100,0)}% in mapped floodway`:""}. ` : "") + "From an aligned FEMA map overlay, not an elevation survey." : "", stateOf(s,"flood")));
+    f && f.status==="ok" ? (f.shareSFHA>0.005 ? `Approximately ${fmt((1-f.shareSFHA)*100,0)}% of the tract is outside mapped floodplain${f.shareFloodway>0.005?`; about ${fmt(f.shareFloodway*100,0)}% in mapped floodway`:""}. ` : "") + "From an aligned FEMA map overlay, not an elevation survey." + (f.firm && f.firm.eff && !s.sample ? ` FEMA map effective ${f.firm.eff}.` : "") : "", stateOf(s,"flood")));
   const w = L.wet; rows.push(readoutRow("wet","Wetlands (NWI)", w && w.status==="ok" ? (w.share>0.002 ? `About ${fmt(w.share*100,1)}% mapped as wetland or water` : w.nearby ? "None mapped on the tract; some nearby" : "None mapped on or near the tract") : esc(failText(w)),
     w && w.status==="ok" && w.typesOnTract.length ? esc(w.typesOnTract.join(", ")) + ". A mapped indicator, not a delineation." : w && w.status==="ok" ? "A mapped indicator, not a delineation." : "", stateOf(s,"wet")));
   const wa = L.water; rows.push(readoutRow("water","Mapped streams", wa && wa.status==="ok" ? (wa.crossing ? "A mapped stream or water body touches the tract" : "None mapped across the tract") : esc(failText(wa)), wa && wa.status==="ok" && wa.names && wa.names.length ? esc(wa.names.slice(0,2).join(", ")) : "", stateOf(s,"water")));
@@ -565,7 +576,7 @@ function sheetTitleLines(s){
   const cty = s.county ? titleCase(s.county) + " County, Texas" : "Texas";
   const rec = [r.lot && "Lot " + r.lot, r.block && "Block " + r.block, r.addition && titleCase(r.addition) + (r.platted && !/ADD/.test(r.addition) ? " Addition" : "")].filter(Boolean).join(", ");
   const abs = r.abstract ? "Abstract No. " + r.abstract : "";
-  return ["PRELIMINARY SITE SCREEN", String(s.title||"Site").toUpperCase(), `BEING ${acTxt(s.acres)} ACRES ±`, rec || abs || (s.sample ? "ILLUSTRATIVE SAMPLE TRACT" : s.sketch ? "SKETCHED OUTLINE" : "APPRAISAL PARCEL"), city + cty].map(t=>t.length>58?t.slice(0,56)+"…":t);
+  return ["PRELIMINARY SITE SCREEN", String(s.title||"Site").toUpperCase(), (s.title==="Sketch a tract here" ? "OUTLINE NOT YET PLACED" : `BEING ${acTxt(s.acres)} ACRES ±`), rec || abs || (s.sample ? "ILLUSTRATIVE SAMPLE TRACT" : s.sketch ? "SKETCHED OUTLINE" : "APPRAISAL PARCEL"), city + cty].map(t=>t.length>58?t.slice(0,56)+"…":t);
 }
 function drawSheet(s){
   if(!s) return; const svg = $("#sheet"), T = sheetXform(s), L = s.layers, o = [];
@@ -624,13 +635,14 @@ function drawSheet(s){
   const pw = L.power;
   if(LAYER_ON.power && pw && pw.status==="ok"){ o.push(`<g${fx("power")}>`); for(const l of pw.lines) o.push(`<path d="${pathOf(l.paths,T,false)}" fill="none" stroke="#b2600b" stroke-width="1.6" stroke-dasharray="16 4 3 4"/>`); o.push(`</g>`); }
   // tract: pale tint and a heavy boundary-weight line, as on the plotted sheets
-  o.push(`<path d="${pathOf(s.rings,T)}" fill="${aerialOn?"rgba(146,26,29,.16)":"rgba(208,49,45,.12)"}" fill-rule="evenodd" stroke="${aerialOn?"#fff":"#111"}" stroke-width="2.6" stroke-linejoin="round" class="tract"/>`);
-  if(aerialOn) o.push(`<path d="${pathOf(s.rings,T)}" fill="none" stroke="#921A1D" stroke-width="1.2" pointer-events="none"/>`);
+  const probe = s.title==="Sketch a tract here";
+  if(!probe) o.push(`<path d="${pathOf(s.rings,T)}" fill="${aerialOn?"rgba(146,26,29,.16)":"rgba(208,49,45,.12)"}" fill-rule="evenodd" stroke="${aerialOn?"#fff":"#111"}" stroke-width="2.6" stroke-linejoin="round" class="tract"/>`);
+  if(aerialOn && !probe) o.push(`<path d="${pathOf(s.rings,T)}" fill="none" stroke="#921A1D" stroke-width="1.2" pointer-events="none"/>`);
   if(s.added.length) for(const p of s.parcels) o.push(`<path class="adjp sel" data-oid="${esc(p.oid)}" d="${pathOf(p.ringsLL.map(r=>r.map(s.P.f)),T)}" fill="rgba(146,26,29,.001)" stroke="#921A1D" stroke-width=".9" stroke-dasharray="3 3"/>`);
-  const [cx,cy] = interiorPoint(s.rings), lc = aerialOn ? "#fff" : ink, ls = aerialOn ? "#111" : halo;
+  if(!probe){ const [cx,cy] = interiorPoint(s.rings), lc = aerialOn ? "#fff" : ink, ls = aerialOn ? "#111" : halo;
   const lbl = [`${acTxt(s.acres)} ACRES ±`, `(${fmt(sig2(s.areaSqft),0)} SQ. FT. ±)`, s.sample ? "SAMPLE TRACT" : s.sketch ? "SKETCHED OUTLINE" : s.added.length ? "APPRAISAL PARCELS (COMBINED)" : "APPRAISAL PARCEL"];
   const r = s.refs || {}; if(r.lot || r.block) lbl.push([r.lot&&"LOT "+r.lot, r.block&&"BLOCK "+r.block].filter(Boolean).join(", ")); if(s.propId && !s.added.length) lbl.push("APPRAISAL ID " + s.propId);
-  o.push(`<text x="${T.X(cx).toFixed(1)}" y="${(T.Y(cy)-lbl.length*5).toFixed(1)}" font-family="${SF}" text-anchor="middle" fill="${lc}" paint-order="stroke" stroke="${ls}" stroke-width="3" pointer-events="none">${lbl.map((l,i)=>`<tspan x="${T.X(cx).toFixed(1)}" dy="${i?12:0}" font-size="${i===0?12.5:8.6}" font-weight="${i===0?600:400}">${esc(l)}</tspan>`).join("")}</text>`);
+  o.push(`<text x="${T.X(cx).toFixed(1)}" y="${(T.Y(cy)-lbl.length*5).toFixed(1)}" font-family="${SF}" text-anchor="middle" fill="${lc}" paint-order="stroke" stroke="${ls}" stroke-width="3" pointer-events="none">${lbl.map((l,i)=>`<tspan x="${T.X(cx).toFixed(1)}" dy="${i?12:0}" font-size="${i===0?12.5:8.6}" font-weight="${i===0?600:400}">${esc(l)}</tspan>`).join("")}</text>`); }
   if(SKETCH && SKETCH.pts.length){ o.push(`<path d="${pathOf([SKETCH.pts],T,SKETCH.pts.length>2)}" fill="rgba(146,26,29,.12)" stroke="#921A1D" stroke-width="2" stroke-dasharray="6 3"/>`);
     for(const p of SKETCH.pts) o.push(`<circle cx="${T.X(p[0])}" cy="${T.Y(p[1])}" r="4" fill="#921A1D"/>`); }
   o.push(`<g transform="translate(${DX+DW/2} ${DY+DH/2}) rotate(-30)" font-family="${SF}" font-weight="600" text-anchor="middle" fill="${aerialOn?"#fff":"#921A1D"}" opacity="${aerialOn?.22:.09}" pointer-events="none"><text font-size="64" y="-12" letter-spacing="10">PRELIMINARY</text><text font-size="38" y="40" letter-spacing="12">NOT A SURVEY</text></g>`);
@@ -687,7 +699,7 @@ function notesColumn(s, T){
   y += 4; widen();
   head("FLOOD STATEMENT");
   if(f && f.status==="ok"){ const pin = f.shareSFHA, zones = f.zonesOnTract.length ? f.zonesOnTract.join(", ") : "X (minimal)";
-    para(`According to the FEMA National Flood Hazard Layer${f.panel&&!s.sample?` (study ${f.panel})`:""}, queried ${today()}, ${pin>0.005?`approximately ${fmt(pin*100,0)}% of this tract lies within the mapped 1% annual-chance floodplain and approximately ${fmt((1-pin)*100,0)}% lies outside mapped floodplain`:`this tract lies outside the mapped 1% annual-chance floodplain`}. Zones touching the tract: ${zones}.${f.shareFloodway>0.005?` About ${fmt(f.shareFloodway*100,0)}% is in mapped floodway.`:""} Percentages are an approximation from an aligned FEMA map overlay, not an on-the-ground elevation survey. This statement does not imply that the property will or will not be free from flooding.`); }
+    para(`According to the FEMA National Flood Hazard Layer${f.panel&&!s.sample?` (study ${f.panel}${f.firm&&f.firm.no?`, FIRM panel ${f.firm.no}`:""}${f.firm&&f.firm.eff?`, effective ${f.firm.eff}`:""})`:""}, queried ${today()}, ${pin>0.005?`approximately ${fmt(pin*100,0)}% of this tract lies within the mapped 1% annual-chance floodplain and approximately ${fmt((1-pin)*100,0)}% lies outside mapped floodplain`:`this tract lies outside the mapped 1% annual-chance floodplain`}. Zones touching the tract: ${zones}.${f.shareFloodway>0.005?` About ${fmt(f.shareFloodway*100,0)}% is in mapped floodway.`:""} Percentages are an approximation from an aligned FEMA map overlay, not an on-the-ground elevation survey. This statement does not imply that the property will or will not be free from flooding.`); }
   else para(f && f.status==="fail" ? "The FEMA service did not answer, so no flood statement is made." : "Loading FEMA flood data…");
   y += 6; widen();
   head("SITE DATA (APPROXIMATE, PUBLIC SOURCES)");
@@ -812,7 +824,7 @@ function powerContextHTML(s){
     <p><a href="${CONFIG.ercotPlanning}" target="_blank" rel="noopener">ERCOT regional planning filings</a> &middot; <a href="${CONFIG.puctLargeLoad}" target="_blank" rel="noopener">PUCT large-load rule (16 TAC §25.194)</a></p>
     ${pw.nearest && pw.nearest.d < 300 ? "<p>A line this close usually means a recorded transmission easement on or next to the tract. Its width and restrictions come from the recorded instrument, located by survey.</p>" : ""}</div>`;
 }
-function renderBrief(s){
+function renderBrief(s){ if(s===current) setTimeout(updRec, 0);
   const L = s.layers, rec = recommend(s), rows = [];
   const row = (k, finding, limit, src, st) => rows.push(`<tr><td class="k">${k}</td><td>${st==="ok"?finding:`<span class="na">Not loaded.</span> The public service didn't answer, so this layer is left off.`}<div class="limit">${limit}</div></td><td class="src">${src}</td></tr>`);
   const st = k => L[k] ? L[k].status : "wait";
@@ -901,7 +913,8 @@ async function screen(raw, {quiet=false}={}){
     return null;
   } finally { if(my === RUN){ go.disabled = false; gl.textContent = "Screen this site"; } }
 }
-function relock(){ if(document.body.classList.contains("staff")) return; $("#briefWrap").classList.add("locked"); $("#reqForm").hidden = false; $("#reqDone").hidden = true; }
+function prefillContact(){ try { const c = JSON.parse(sessionStorage.getItem("asc_contact")||"null"); if(!c) return; const f = $("#reqForm"); for(const [k,v] of Object.entries(c)) if(f.elements[k] && !f.elements[k].value) f.elements[k].value = v; } catch(_){} }
+function relock(){ if(document.body.classList.contains("staff")) return; document.body.classList.remove("unlocked"); $("#briefWrap").classList.add("locked"); $("#reqForm").hidden = false; $("#reqDone").hidden = true; prefillContact(); }
 function note(msg){ const n = $("#notice"); if(msg){ n.textContent = msg; n.hidden = false; } else n.hidden = true; }
 function offerSketch(center){
   const P = proj(center), half = 900, ring = [[-half,-half],[half,-half],[half,half],[-half,half]];
@@ -912,6 +925,22 @@ function offerSketch(center){
   $("#readout").innerHTML = '<li><span class="st na" aria-hidden="true"></span><div><div class="ro-k">No parcel at that point</div><div class="ro-v">Sketch the tract on the aerial</div><div class="ro-s">Click the corners on the sheet, then choose Screen this outline. Every layer runs on your outline.</div></div></li>';
   startSketch();
   $("#results").scrollIntoView({behavior:"smooth"});
+  nearbyPicks(base);
+}
+// a missed click is usually a road or a sliver: offer the closest real parcels as one-click picks first
+async function nearbyPicks(base){
+  const [x0,y0,x1,y1] = base.frame, a = base.P.i([x0,y0]), b = base.P.i([x1,y1]);
+  let nb; try { nb = await fetchNeighbors([a[0],a[1],b[0],b[1]], null); } catch(_){ return; }
+  if(current !== base || !nb.length) return;
+  const items = nb.slice(0,220).map(n=>({...n, rings:n.ringsLL.map(r=>r.map(base.P.f))}));
+  base.layers.adj = {status:"ok", items}; LAYER_ON.adj = true; drawSheet(base);
+  const picks = items.map(n=>{ const [cx,cy] = interiorPoint(n.rings); return {n, cx, cy, d:Math.hypot(cx,cy), ac:Math.abs(n.rings.reduce((t,r)=>t+ringArea(r),0))/43560}; })
+    .filter(x=>x.ac>=0.05).sort((p,q)=>p.d-q.d).slice(0,4);
+  if(!picks.length) return;
+  const li = picks.map(({n,cx,cy,d,ac})=>{ const [lng,lat] = base.P.i([cx,cy]);
+    const what = n.situs || (n.legal ? titleCase(String(n.legal)).slice(0,48) : "Appraisal parcel");
+    return `<button type="button" class="pick" data-ll="${lat.toFixed(6)}, ${lng.toFixed(6)}"><b>${esc(acTxt(ac))} ac</b> <span>${esc(what)}</span> <i>${fmt(sig2(d),0)} ft away</i></button>`; }).join("");
+  $("#readout").insertAdjacentHTML("afterbegin", `<li class="picks-li"><span class="st ok" aria-hidden="true"></span><div><div class="ro-k">Did you mean one of these?</div><div class="ro-s">The closest appraisal parcels to that point. Pick one to screen it, or sketch your own outline below.</div><div class="picks">${li}</div></div></li>`);
 }
 
 /* ===== Sketch mode ===== */
@@ -985,7 +1014,7 @@ function renderList(){
 }
 /* ===== Packet request (the gate: contact details in, packet by email) ===== */
 function updPacketForm(){ updRec(); const n = LIST.length; $("#listOpt").hidden = !n; $("#listN").textContent = n; $("#pkListItem").hidden = !n; }
-function unlockBrief(){ $("#briefWrap").classList.remove("locked"); }
+function unlockBrief(){ $("#briefWrap").classList.remove("locked"); document.body.classList.add("unlocked"); }
 async function submitRequest(e){
   e.preventDefault(); const f = e.target, err = $("#reqErr"); err.hidden = true;
   const d = Object.fromEntries(new FormData(f).entries());
@@ -994,7 +1023,8 @@ async function submitRequest(e){
   const clip = (v,n) => v == null || v === "" ? null : String(v).slice(0,n);
   const siteRef = s ? (s.sample ? "sample:"+s.sampleId : s.sketch ? "sketch:"+s.sketchLL.map(p=>p[1].toFixed(6)+","+p[0].toFixed(6)).join(";") : (s.situs || s.input)) : null;
   const list = d.withList && LIST.length ? LIST.slice(-30).map(x=>({title:String(x.title).slice(0,120), url:String(x.url).slice(0,600), acres:x.acres})) : [];
-  const packet = { v:1, link: s ? shareURL(s).slice(0,1500) : null, screen_no: s ? screenNo(s) : null, title: s ? String(s.title).slice(0,160) : null, stage:STAGE, type:TYPE, list };
+  const packet = { v:1, link: s ? shareURL(s).slice(0,1500) : null, screen_no: s ? screenNo(s) : null, title: s ? String(s.title).slice(0,160) : null, stage:STAGE, type:TYPE, list,
+    failed_layers: s && !s.sample ? Object.keys(L).filter(k=>L[k] && L[k].status==="fail") : [], fema_effective: L.flood && L.flood.firm ? L.flood.firm.eff : null };
   const row = { kind:"request", goal:(d.proposal?"packet+proposal:":"packet:")+STAGE, site_type:TYPE || (s&&s.sample?s.type:null), survey: rec ? (rec.pri===SURVEYS.none ? (rec.add?rec.add.key:"unsure") : rec.pri.key) : null,
     location: clip(siteRef, 400), lat: s ? +s.center.lat.toFixed(6) : null, lng: s ? +s.center.lng.toFixed(6) : null, acres: s ? +s.acres.toFixed(2) : null,
     flood_zones: L.flood && L.flood.status==="ok" ? clip(L.flood.zonesOnTract.join(", ") || "X", 200) : null, pct_outside_floodplain: L.flood && L.flood.status==="ok" ? +((1-L.flood.shareSFHA)*100).toFixed(1) : null,
@@ -1002,17 +1032,18 @@ async function submitRequest(e){
     name: d.name.slice(0,200), email: d.email.slice(0,320), phone: clip(d.phone,40), company: clip(d.company,200), note: clip(d.note,1000),
     role: clip(d.role,60), timing: clip(d.timing,60), wants_records: !!d.records, wants_proposal: !!d.proposal, packet };
   const dry = /[?&]dry=1/.test(location.search) || /^TEST\b/i.test(d.name);
-  const btn = f.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "Sending…";
+  const btn = f.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "Opening…";
   try {
     if(!dry){
       const r = await fetch(CONFIG.store.url + "/rest/v1/" + CONFIG.store.table, {method:"POST", headers:{"Content-Type":"application/json", apikey:CONFIG.store.key, Authorization:"Bearer "+CONFIG.store.key, Prefer:"return=minimal"}, body:JSON.stringify(row)});
       if(!r.ok) throw new Error("HTTP "+r.status);
     } else await sleep(500);
-    f.hidden = true; $("#doneEmail").textContent = d.email; $("#doneH").textContent = s ? `The packet for ${s.title} is on the way.` : "Your request is in.";
-    $("#reqDone").hidden = false; $("#reqDone").focus(); unlockBrief(); toast(dry ? "Test mode: nothing was sent." : "Packet requested.");
+    try { sessionStorage.setItem("asc_contact", JSON.stringify({name:d.name, email:d.email, company:d.company||"", phone:d.phone||"", role:d.role, timing:d.timing})); } catch(_){}
+    f.hidden = true; $("#doneEmail").textContent = d.email; $("#doneH").textContent = s ? `The packet for ${s.title} is open below.` : "Your request is in.";
+    $("#reqDone").hidden = false; $("#reqDone").focus(); unlockBrief(); toast(dry ? "Test mode: nothing was sent." : "Packet unlocked.");
   } catch(ex){
     err.innerHTML = `The request didn't go through. Please email <a href="mailto:surveytx@txasc.com?subject=${encodeURIComponent("Site Screen packet: "+(s?s.title:"site"))}&body=${encodeURIComponent((s?shareURL(s)+"\n\n":"")+(d.note||""))}">surveytx@txasc.com</a> or call (469) 317-0250.`; err.hidden = false;
-  } finally { btn.disabled = false; btn.textContent = "Email me the packet"; }
+  } finally { btn.disabled = false; btn.textContent = "Open my packet"; }
 }
 
 /* ===== Bulk ===== */
@@ -1033,10 +1064,14 @@ async function runBulk(){
 function setView(v){ VIEW = v; $("#tabSheet").setAttribute("aria-selected", String(v==="sheet")); $("#tabModel").setAttribute("aria-selected", String(v==="model"));
   $("#sheetWrap").hidden = v!=="sheet"; $("#modelWrap").hidden = v!=="model"; $("#layers").hidden = v!=="sheet";
   cancelAnimationFrame(MODEL.raf); if(v==="model"){ MODEL.auto = !matchMedia("(prefers-reduced-motion: reduce)").matches; modelLoop(); } }
-function updRec(){ const el = $("#pfRec"); if(!el) return; if(!current || current.sketch && !current.layers.flood){ el.hidden = true; return; }
+const art = n => /^[AEIOU]/i.test(n) ? "an" : "a";
+function updRec(){ const el = $("#pfRec"), hd = $("#resRec"); if(!el) return; if(!current || current.sketch && !current.layers.flood){ el.hidden = true; if(hd) hd.hidden = true; return; }
   const r = recommend(current); el.hidden = false;
-  el.innerHTML = r.pri===SURVEYS.none ? `<b>Our read:</b> no survey needed yet. ${esc(r.why)}${r.add?` When it moves forward, plan on ${/^[AEIOU]/i.test(r.add.name)?"an":"a"} ${esc(r.add.name.toLowerCase().replace("alta/nsps","ALTA/NSPS"))}.`:""}`
-    : `<b>Our read:</b> start with ${/^[AEIOU]/i.test(r.pri.name)?"an":"a"} ${esc(r.pri.name.replace(/^ALTA/,"ALTA"))}${r.add?`, then a ${esc(r.add.name.toLowerCase())}`:""}. ${esc(r.why)}`; }
+  const add = r.add ? r.add.name.toLowerCase().replace("alta/nsps","ALTA/NSPS") : null;
+  el.innerHTML = r.pri===SURVEYS.none ? `<b>Our read:</b> no survey needed yet. ${esc(r.why)}${add?` When it moves forward, plan on ${art(add)} ${esc(add)}.`:""}`
+    : `<b>Our read:</b> start with ${art(r.pri.name)} ${esc(r.pri.name)}${add?`, then ${art(add)} ${esc(add)}`:""}. ${esc(r.why)}`;
+  if(hd){ hd.hidden = false; hd.innerHTML = (r.pri===SURVEYS.none ? `<b>Our read:</b> no survey needed yet${add?`; plan on ${art(add)} ${esc(add)} when it moves forward`:""}.`
+    : `<b>Our read:</b> start with ${art(r.pri.name)} ${esc(r.pri.name)}${add?`, then ${art(add)} ${esc(add)}`:""}.`) + ` <a href="#packet">Ask us about it</a>`; } }
 function setType(k, silent){ TYPE = TYPE===k && !silent ? null : k; document.querySelectorAll("#types .chip").forEach(c=>c.setAttribute("aria-pressed", String(c.dataset.k===TYPE))); if(current && !silent) renderBrief(current); updRec(); }
 function setStage(k){ STAGE = k; document.querySelectorAll("#stages .chip").forEach(c=>c.setAttribute("aria-pressed", String(c.dataset.k===STAGE))); if(current) renderBrief(current); updRec(); }
 
@@ -1080,7 +1115,7 @@ function wfDetail0(step, s){ const L = s.layers, ok = k => L[k] && L[k].status==
   switch(step.id){
     case "rec": return s.sample ? "Illustrative sample record" : s.sketch ? "Sketched outline, no record attached" : [s.propId && "ID " + s.propId, r.abstract && "Abstract " + r.abstract, r.lot && "Lot " + r.lot, r.block && "Block " + r.block].filter(Boolean).slice(0,3).join(" · ") || (s.county ? titleCase(s.county) + " County roll" : step.d);
     case "sketch": return `${acTxt(s.acres)} acres ± · ${s.rings.reduce((t,x)=>t+x.length,0)} vertices`;
-    case "flood": return ok("flood") ? (L.flood.shareSFHA>0.005 ? `~${fmt(L.flood.shareSFHA*100,0)}% in mapped 1% floodplain` : "Outside mapped 1% floodplain") + (L.flood.panel && !s.sample ? ` · ${L.flood.panel}` : "") : step.d;
+    case "flood": return ok("flood") ? (L.flood.shareSFHA>0.005 ? `~${fmt(L.flood.shareSFHA*100,0)}% in mapped 1% floodplain` : "Outside mapped 1% floodplain") + (L.flood.panel && !s.sample ? ` · ${L.flood.panel}` : "") + (L.flood.firm && L.flood.firm.eff && !s.sample ? ` · map effective ${L.flood.firm.eff}` : "") : step.d;
     case "water": return ok("wet") || ok("water") ? [ok("wet") ? (L.wet.share>0.002 ? `~${fmt(L.wet.share*100,1)}% mapped wetland` : "No mapped wetland on tract") : null, ok("water") ? (L.water.crossing ? "stream touches tract" : "no mapped stream across") : null].filter(Boolean).join(" · ") : step.d;
     case "soils": return ok("soils") && L.soils.units[0] ? `${L.soils.units[0].name.split(",")[0]} · group ${L.soils.units[0].hyd||"n/a"}` : step.d;
     case "topo": return ok("terrain") ? `${fmt(L.terrain.min,0)}–${fmt(L.terrain.max,0)} ft · ${s._contourIv||"–"}-ft contours` : step.d;
@@ -1226,6 +1261,8 @@ function init(){
   $("#bulkGo").addEventListener("click", runBulk);
   $("#layers").addEventListener("click", e=>{ const b = e.target.closest(".lyr"); if(!b) return; const k = b.dataset.k; LAYER_ON[k] = !LAYER_ON[k]; if(LAYER_ON[k] && (k==="aerial"||k==="ghost")) LAYER_ON[k==="aerial"?"ghost":"aerial"] = false; document.querySelectorAll("#layers .lyr").forEach(x=>x.setAttribute("aria-pressed", String(!!LAYER_ON[x.dataset.k]))); drawSheet(current); });
   $("#tabSheet").addEventListener("click", ()=>setView("sheet")); $("#tabModel").addEventListener("click", ()=>setView("model"));
+  $("#btnRetry").addEventListener("click", retryMissing);
+  $("#btnSavePdf").addEventListener("click", ()=>{ if(current){ setView("sheet"); drawSheet(current); } window.print(); });
   $("#btnShare").addEventListener("click", async ()=>{ if(!current) return; const u = shareURL(current); try { await navigator.clipboard.writeText(u); toast("Link copied. It re-runs the screen with today's public data."); } catch(e){ prompt("Copy this link", u); } });
   $("#btnList").addEventListener("click", addCurrentToList);
   $("#slClear").addEventListener("click", ()=>{ LIST = []; saveList(); if(current) $("#btnList").textContent = "Add to short list"; });
@@ -1238,6 +1275,7 @@ function init(){
     if(SKETCH){ const [px,py] = svgPoint(e); if(px<DX||px>DX+DW||py<DY||py>DY+DH) return; SKETCH.pts.push(sheetXform(SKETCH.base).inv(px,py)); updSketch(); return; }
     const p = e.target.closest(".adjp"); if(p) toggleNeighbor(p.dataset.oid);
   });
+  $("#readout").addEventListener("click", e=>{ const b = e.target.closest(".pick"); if(!b) return; if(SKETCH) endSketch(); $("#loc").value = b.dataset.ll; screen(b.dataset.ll); });
   $("#reqForm").addEventListener("submit", submitRequest);
   $("#again").addEventListener("click", ()=>{ $("#reqForm").reset(); $("#reqForm").hidden = false; $("#reqDone").hidden = true; $("#loc").focus(); window.scrollTo({top:0, behavior:"smooth"}); });
   initModelInput(); renderList(); renderMonitor(); heroReel();
