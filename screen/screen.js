@@ -936,4 +936,4 @@ function init(){
     if(pts.length>=3){ const c = {lat:pts.reduce((t,p)=>t+p[1],0)/pts.length, lng:pts.reduce((t,p)=>t+p[0],0)/pts.length}, P = proj(c);
       const base = {P, county:null, area:"Texas"}; const s = siteFromSketch(pts.map(P.f), base); current = s; renderSite(s); screenLayers(s).then(()=>{ if(s===current){ renderBrief(s); renderReadout(s); } }); } }
 }
-document.addEventListener("DOMContentLoaded", init);
+if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
