@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Site Screen | Adams Surveying Company</title>
+<meta name="description" content="A free, preliminary public-record screen for Texas land: appraisal parcel, mapped floodplain, wetlands, soils, public-lidar terrain, transmission proximity and jurisdiction on one sheet. Not a survey.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Monda:wght@400;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="screen.css">
+</head>
+<body>
+<a class="skip" href="#console">Skip to the site screen</a>
+
+<header class="hdr">
+  <div class="wrap hdr-in">
+    <a class="brand" href="https://txasc-c4b03fc922e0177f01298f114a33dce1.webflow.io/" aria-label="Adams Surveying Company home"><img src="img/logo.png" alt="Adams Surveying Company" width="156" height="60"></a>
+    <nav class="nav" aria-label="Main">
+      <a href="https://txasc-c4b03fc922e0177f01298f114a33dce1.webflow.io/services">Services</a>
+      <a href="https://txasc-c4b03fc922e0177f01298f114a33dce1.webflow.io/about">About</a>
+      <a href="#shortlist" id="navList">Short list <span class="count" id="navCount" hidden>0</span></a>
+      <a class="tel" href="tel:+14693170250">(469) 317-0250</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero" aria-labelledby="h1">
+  <img class="hero-img" src="img/hero.jpg" alt="" width="1920" height="1080" fetchpriority="high">
+  <div class="wrap hero-in">
+    <p class="eyebrow">Free site screen &middot; Texas land</p>
+    <h1 id="h1">What the public record says about a tract, on one sheet.</h1>
+    <p class="lede">Enter a location. In about a minute you get the appraisal parcel, mapped floodplain and wetlands, soils, public-lidar terrain, nearby transmission lines and the jurisdiction, drawn as a preliminary sheet you can forward. No account. Run it on every site on your list, including the ones you drop by lunch.</p>
+
+    <form class="console" id="console" autocomplete="off" novalidate>
+      <div class="field-row">
+        <label class="sr" for="loc">Site location</label>
+        <input id="loc" name="loc" type="text" inputmode="text" placeholder="Address, coordinates, plus code or map link" aria-describedby="locHelp">
+        <button class="btn btn-red" id="go" type="submit">Screen this site</button>
+      </div>
+      <p class="help" id="locHelp">Examples: <code>1475 Richardson Dr, Richardson TX</code> &middot; <code>32.9765, -96.7520</code> &middot; <code>8645X6GX+J6</code>. <button type="button" class="linkbtn" id="bulkToggle">Paste a list of sites</button></p>
+      <div class="bulk" id="bulk" hidden>
+        <label for="bulkText">One location per line, up to 30. Each site is screened in turn and added to your short list.</label>
+        <textarea id="bulkText" rows="5" placeholder="32.6411, -97.0583&#10;FM 664 and I-45, Ennis TX&#10;8644R2XQ+5C"></textarea>
+        <div class="bulk-row"><button class="btn btn-ghost" type="button" id="bulkGo">Screen the list</button><span class="bulk-status" id="bulkStatus" role="status"></span></div>
+      </div>
+
+      <fieldset class="chips" id="typeSet">
+        <legend>Project type <span class="opt">optional</span></legend>
+        <div class="chip-row" id="types"></div>
+      </fieldset>
+      <fieldset class="chips" id="stageSet">
+        <legend>Where the site stands</legend>
+        <div class="chip-row" id="stages"></div>
+      </fieldset>
+      <p class="samples">Or open a sample: <span id="samples"></span></p>
+      <p class="notice" id="notice" role="alert" hidden></p>
+    </form>
+  </div>
+</section>
+
+<section class="results" id="results" hidden aria-label="Site screen results">
+  <div class="wrap">
+    <div class="res-head">
+      <div>
+        <p class="eyebrow dark" id="resKind">Site screen</p>
+        <h2 id="resTitle">Site</h2>
+        <p class="res-sub" id="resSub"></p>
+      </div>
+      <div class="res-actions">
+        <button class="btn btn-ghost" type="button" id="btnPrint">Download PDF</button>
+        <button class="btn btn-ghost" type="button" id="btnShare">Copy share link</button>
+        <button class="btn btn-ghost" type="button" id="btnList">Add to short list</button>
+        <a class="btn btn-red" href="#proposal" id="btnProp">Request a proposal</a>
+      </div>
+    </div>
+
+    <div class="res-grid">
+      <div class="sheet-col">
+        <div class="viewbar" role="tablist" aria-label="Exhibit view">
+          <button role="tab" aria-selected="true" data-view="sheet" id="tabSheet">Sheet</button>
+          <button role="tab" aria-selected="false" data-view="model" id="tabModel">Terrain model</button>
+          <span class="vb-gap"></span>
+          <button type="button" class="linkbtn small" id="btnSketch" title="Draw your own tract outline on the sheet">Sketch a tract</button>
+        </div>
+        <div class="layers" id="layers" aria-label="Layers"></div>
+        <div class="sheet-wrap" id="sheetWrap">
+          <svg id="sheet" viewBox="0 0 1100 760" role="img" aria-labelledby="sheetTitle"><title id="sheetTitle">Preliminary site screen sheet</title></svg>
+          <div class="sketchbar" id="sketchBar" hidden>
+            <span>Click the sheet to place corners. <strong id="sketchCount">0</strong> placed.</span>
+            <button class="btn btn-small" type="button" id="sketchUndo">Undo</button>
+            <button class="btn btn-small btn-red" type="button" id="sketchDone">Screen this outline</button>
+            <button class="btn btn-small" type="button" id="sketchCancel">Cancel</button>
+          </div>
+        </div>
+        <div class="model-wrap" id="modelWrap" hidden>
+          <canvas id="model" width="1100" height="660" aria-label="Terrain model from public lidar, preliminary"></canvas>
+          <div class="model-mark" aria-hidden="true">PRELIMINARY MODEL &middot; NOT A SURVEY</div>
+          <p class="model-cap" id="modelCap"></p>
+        </div>
+        <p class="sheet-note">Appraisal parcel lines are not a boundary and can be off by tens of feet. Every figure on this sheet is approximate and comes from public data. Not for conveyance, design or construction.</p>
+      </div>
+
+      <aside class="panel" aria-label="Screen summary">
+        <h3 class="panel-h">Public record, layer by layer</h3>
+        <ol class="readout" id="readout"></ol>
+        <div class="adj" id="adjBox" hidden>
+          <h4>Assemblage</h4>
+          <p id="adjText">Click a neighboring parcel on the sheet to add it to the screen. Layers recompute for the combined outline.</p>
+        </div>
+      </aside>
+    </div>
+
+    <div class="brief" id="brief"></div>
+  </div>
+</section>
+
+<section class="explain" aria-labelledby="whatH">
+  <div class="wrap">
+    <h2 id="whatH">What this screen is, and what it is not</h2>
+    <div class="two">
+      <div>
+        <h3>It assembles the first look</h3>
+        <p>The facts most people gather on the first day: the appraisal parcel and its neighbors, FEMA's mapped flood zones, the National Wetlands Inventory, mapped streams, NRCS soils, USGS lidar terrain, public transmission lines, and whether the tract sits inside mapped city limits. Each layer carries its source and date, and fails openly when a public service is down.</p>
+        <p>The data has been public for years. What cost money was assembling it: a desktop feasibility report, a zoning summary, a data seat, or an afternoon of map tabs on a tract you may never buy.</p>
+      </div>
+      <div>
+        <h3>It does not replace licensed or certified work</h3>
+        <ul class="ticks">
+          <li>A boundary or ALTA/NSPS survey, sealed by a Texas RPLS</li>
+          <li>A design topographic survey and quantities</li>
+          <li>A wetland delineation or a Phase I ESA</li>
+          <li>A geotechnical report</li>
+          <li>A city zoning verification letter</li>
+          <li>A utility capacity or interconnection study</li>
+          <li>A title commitment</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="shortlist" id="shortlist" aria-labelledby="slH">
+  <div class="wrap">
+    <div class="sl-head">
+      <h2 id="slH">Your short list</h2>
+      <div class="sl-actions">
+        <button class="btn btn-ghost" type="button" id="slCsv">Download CSV</button>
+        <button class="btn btn-ghost" type="button" id="slPrint">Print the list</button>
+        <button class="linkbtn" type="button" id="slClear">Clear the list</button>
+      </div>
+    </div>
+    <p class="sl-note">Saved in this browser only. Nothing on the list is sent to ASC unless you request a proposal.</p>
+    <div class="sl-table-wrap"><table class="sl-table" id="slTable"></table></div>
+    <p class="sl-empty" id="slEmpty">Screen a site and choose <strong>Add to short list</strong> to compare tracts side by side.</p>
+  </div>
+</section>
+
+<section class="proposal" id="proposal" aria-labelledby="propH">
+  <div class="wrap prop-grid">
+    <div class="prop-copy">
+      <h2 id="propH">When a site is kept</h2>
+      <p>Once a tract is under option or contract, the questions this screen can't answer get real: where the boundary actually is, which recorded easements touch it, and what the ground actually does.</p>
+      <p>ASC is the crew with the drone. The boundary is tied and the site is flown on the same visit, so the boundary or ALTA, the design topography, and later the construction control and progress flights come from one licensed Texas crew instead of several vendors.</p>
+      <p class="facts">Richardson, Texas &middot; Established 2009 &middot; Veteran-owned &middot; Two RPLS on staff. Every survey is reviewed by a Registered Professional Land Surveyor.</p>
+    </div>
+    <div class="prop-form">
+      <form id="reqForm" novalidate>
+        <p class="pf-site" id="pfSite">Screen a site first, or describe it in the note.</p>
+        <div class="pf-grid">
+          <label>Your role
+            <select name="role" required>
+              <option value="">Choose one</option>
+              <option>Land broker</option><option>Developer or acquisitions</option><option>Site selector or adviser</option><option>Landowner</option><option>Economic development</option><option>Civil engineer</option><option>Lender or title</option><option>Other</option>
+            </select>
+          </label>
+          <label>Timing
+            <select name="timing" required>
+              <option value="">Choose one</option>
+              <option>Just screening</option><option>Within 30 days</option><option>1 to 3 months</option><option>Later this year</option>
+            </select>
+          </label>
+          <label>Under contract or option?
+            <select name="contract">
+              <option value="">Choose one</option>
+              <option>Not yet</option><option>Under option</option><option>Under contract</option><option>We own it</option>
+            </select>
+          </label>
+          <label>Name<input name="name" type="text" autocomplete="name" required></label>
+          <label>Email<input name="email" type="email" autocomplete="email" required></label>
+          <label>Phone <span class="opt">optional</span><input name="phone" type="tel" autocomplete="tel"></label>
+          <label class="wide">Note <span class="opt">optional</span><textarea name="note" rows="3" placeholder="Anything that would help, such as the lender, a target closing date, or the part of the tract you care about"></textarea></label>
+          <label class="check wide"><input type="checkbox" name="records"> Also research the recorded deeds and plats for this tract</label>
+        </div>
+        <button class="btn btn-red" type="submit">Request a proposal</button>
+        <p class="pf-alt">Prefer the main site form? <a id="altLink" href="https://txasc-c4b03fc922e0177f01298f114a33dce1.webflow.io/contact">Continue there with this site filled in</a>.</p>
+        <p class="notice" id="reqErr" role="alert" hidden></p>
+      </form>
+      <div class="done" id="reqDone" hidden tabindex="-1">
+        <h3>Thanks. Here's what happens next.</h3>
+        <ol class="next">
+          <li><strong>A surveyor reviews the site</strong> and the screen you ran, usually within one business day.</li>
+          <li><strong>You get a written proposal</strong> with the scope, price and schedule. Nothing is ordered until you approve it.</li>
+          <li><strong>The crew is scheduled</strong>, and the boundary and the flight are captured on the same visit where the job calls for both.</li>
+        </ol>
+        <p>Questions in the meantime: <a href="tel:+14693170250">(469) 317-0250</a> or <a href="mailto:surveytx@txasc.com">surveytx@txasc.com</a>.</p>
+        <button class="btn btn-ghost" type="button" id="again">Screen another site</button>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-in">
+    <div>
+      <img src="img/logo.png" alt="Adams Surveying Company" width="130" height="50" loading="lazy">
+      <p>Adams Surveying Company<br>1475 Richardson Drive, Suite 255<br>Richardson, TX 75080</p>
+      <p><a href="tel:+14693170250">(469) 317-0250</a><br><a href="mailto:surveytx@txasc.com">surveytx@txasc.com</a></p>
+    </div>
+    <div class="foot-legal">
+      <p><strong>Preliminary screen. Not a survey.</strong> This page assembles public data from TxGIO, FEMA, USFWS, USDA NRCS, USGS, HIFLD and Esri. It is not a boundary survey, is not certified, and must not be used for conveyance, design or construction. Appraisal parcel lines can be off by tens of feet. Flood, wetland, soil, terrain and earthwork figures are approximations from map overlays and public lidar, not field measurements. Transmission proximity says nothing about available capacity. A mapped zoning or city-limit layer is not a zoning verification.</p>
+      <p>Established 2009 &middot; Veteran-owned &middot; Two RPLS on staff</p>
+    </div>
+  </div>
+</footer>
+
+<div class="print-band" aria-hidden="true">PRELIMINARY SITE SCREEN &middot; NOT A SURVEY &middot; Public data, approximate. Not for conveyance, design or construction. &middot; Adams Surveying Company &middot; (469) 317-0250</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="screen.js"></script>
+</body>
+</html>
