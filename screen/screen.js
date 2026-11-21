@@ -133,6 +133,8 @@ const inTexas = p => p.lat > 25.8 && p.lat < 36.6 && p.lng > -106.7 && p.lng < -
 function proj(c){ const k = Math.cos(c.lat*Math.PI/180);
   return { f:([lng,lat]) => [(lng-c.lng)*Math.PI/180*R*k*FT, (lat-c.lat)*Math.PI/180*R*FT],
            i:([x,y]) => [c.lng + x/FT/R/k*180/Math.PI, c.lat + y/FT/R*180/Math.PI] }; }
+// pixel size whose aspect matches the bbox in degrees; ArcGIS export widens a mismatched bbox to keep pixels square, which shifts an image stretched into our frame
+function degSize(a, b, long){ const w = Math.abs(b[0]-a[0]), h = Math.abs(b[1]-a[1]); return w >= h ? [long, Math.max(1, Math.round(long*h/w))] : [Math.max(1, Math.round(long*w/h)), long]; }
 function ringArea(r){ let a=0; for(let i=0;i<r.length;i++){ const [x1,y1]=r[i],[x2,y2]=r[(i+1)%r.length]; a+=x1*y2-x2*y1; } return a/2; }
 function polyArea(rings){ return Math.abs(rings.reduce((s,r)=>s+ringArea(r),0)); }
 function inRings(x,y,rings){ let inside=false;
@@ -256,8 +258,7 @@ from mupolygon P join mapunit mu on mu.mukey=P.mukey where P.mupolygongeo.STInte
 }
 async function fetchTerrain(site){
   const [x0,y0,x1,y1] = site.frame, w = x1-x0, h = y1-y0, big = Math.max(w,h);
-  const nx = Math.max(24, Math.min(128, Math.round(128*w/big))), ny = Math.max(24, Math.min(128, Math.round(128*h/big)));
-  const a = site.P.i([x0,y0]), b = site.P.i([x1,y1]);
+  const a = site.P.i([x0,y0]), b = site.P.i([x1,y1]), [nx, ny] = degSize(a, b, 128).map(v=>Math.max(24, v));
   const url = CONFIG.dem + "/exportImage?" + qs({bbox:[a[0],a[1],b[0],b[1]].join(","), bboxSR:4326, imageSR:4326, size:nx+","+ny, format:"tiff", pixelType:"F32", noData:-9999,
     interpolation:"RSP_BilinearInterpolation", compression:"None", f:"image"});
   const ctl = new AbortController(); const t = setTimeout(()=>ctl.abort(), 25000);
@@ -596,7 +597,7 @@ function drawSheet(s){
   const aerialOn = LAYER_ON.aerial && !s.sample;
   const ghostOn = LAYER_ON.ghost && !aerialOn && !s.sample;
   if(aerialOn || ghostOn){ const a = s.P.i([x0,y0]), b = s.P.i([x1,y1]);
-    const url = CONFIG.imagery + "?" + qs({bbox:[a[0],a[1],b[0],b[1]].join(","), bboxSR:4326, imageSR:4326, size:"1180,1160", format:"jpg", f:"image"});
+    const url = CONFIG.imagery + "?" + qs({bbox:[a[0],a[1],b[0],b[1]].join(","), bboxSR:4326, imageSR:4326, size:degSize(a,b,1400).join(","), format:"jpg", f:"image"});
     o.push(aerialOn ? `<image href="${esc(url)}" x="${DX}" y="${DY}" width="${DW}" height="${DH}" preserveAspectRatio="none" opacity=".62"/>`
       : `<image href="${esc(url)}" x="${DX}" y="${DY}" width="${DW}" height="${DH}" preserveAspectRatio="none" opacity=".3" filter="url(#fGhost)"/>`); }
   const ink = "#111", halo = "#fff";
@@ -660,7 +661,7 @@ function notesColumn(s, T){
   o.push(`<g clip-path="url(#cpVic)">`);
   const half = Math.max(5200, Math.sqrt(s.areaSqft)*7), hy = half*vh/vw;
   if(!s.sample){ const a = s.P.i([-half,-hy]), b = s.P.i([half,hy]);
-    const url = CONFIG.vicinity + "?" + qs({bbox:[a[0],a[1],b[0],b[1]].join(","), bboxSR:4326, imageSR:4326, size:Math.round(vw*3)+","+Math.round(vh*3), format:"png", f:"image"});
+    const url = CONFIG.vicinity + "?" + qs({bbox:[a[0],a[1],b[0],b[1]].join(","), bboxSR:4326, imageSR:4326, size:degSize(a,b,Math.round(Math.max(vw,vh)*3)).join(","), format:"png", f:"image"});
     o.push(`<image href="${esc(url)}" x="${vx}" y="${vy}" width="${vw}" height="${vh}" preserveAspectRatio="none" filter="url(#gray)"/>`); }
   else for(let i=1;i<6;i++) o.push(`<path d="M${vx} ${vy+i*vh/6+((i*37)%11)}L${vx+vw} ${vy+i*vh/6-((i*23)%9)}M${vx+i*vw/6} ${vy}L${vx+i*vw/6+((i*13)%7)} ${vy+vh}" stroke="#c9c9c9" stroke-width="${i===3?2:.8}"/>`);
   const vk = vw/(2*half), VX = x=>vx+vw/2+x*vk, VY = y=>vy+vh/2-y*vk;
