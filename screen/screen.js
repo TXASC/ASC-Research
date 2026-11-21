@@ -511,8 +511,9 @@ function readoutRow(k, label, value, sub, st){
   const [ico, src, c] = RO_META[k] || ["sheet","",""], m = roMeter(k), sig = value + "|" + st, fresh = RO_PREV[k] !== undefined && RO_PREV[k] !== sig && st==="ok"; RO_PREV[k] = sig;
   return `<li class="ro ${st}${fresh?" fresh":""}" style="--c:${c}"><span class="ro-ico" aria-hidden="true">${roThumb(k, st) || `<svg viewBox="0 0 24 24">${WF_ICO[ico]}</svg>`}<span class="st ${st}"></span></span><div class="ro-body"><div class="ro-k">${esc(label)}<span class="ro-src">${esc(src)}</span></div><div class="ro-v">${value}</div>${m?`<div class="ro-m" title="${esc(m.lab)}"><i style="width:${Math.max(2,Math.round(m.v*100))}%"></i></div>`:""}${sub?`<div class="ro-s">${sub}</div>`:""}</div></li>`; }
 function failText(l){ return l && l.status==="fail" ? "The public service didn't answer, so this layer is left off. Nothing was assumed." : "Loading…"; }
-function retryMissing(){ const s = current; if(!s) return; const keys = STEPS.map(x=>x[0]).filter(k=>k!=="parcel" && s.layers[k] && s.layers[k].status==="fail");
-  if(s.layers.adj && s.layers.adj.status==="fail") keys.push("adj"); if(!keys.length) return; toast("Asking the public services again…"); screenLayers(s, keys); }
+async function retryMissing(){ const s = current; if(!s) return; const keys = STEPS.map(x=>x[0]).filter(k=>k!=="parcel" && s.layers[k] && s.layers[k].status==="fail");
+  if(s.layers.adj && s.layers.adj.status==="fail") keys.push("adj"); if(!keys.length) return; toast("Asking the public services again…");
+  await screenLayers(s, keys); if(s===current){ renderBrief(s); renderReadout(s); renderInsights(s); } }
 function renderRetry(s){ const b = $("#retryBox"); if(!b) return; const miss = STEPS.filter(([k])=>k!=="parcel" && s.layers[k] && s.layers[k].status==="fail");
   b.hidden = !miss.length || s.sample; if(miss.length) $("#retryTxt").textContent = `${miss.length===1?"One public service":miss.length+" public services"} didn't answer: ${miss.map(x=>x[1]).join(", ")}.`; }
 function renderReadout(s){
@@ -1261,7 +1262,7 @@ function init(){
   $("#layers").addEventListener("click", e=>{ const b = e.target.closest(".lyr"); if(!b) return; const k = b.dataset.k; LAYER_ON[k] = !LAYER_ON[k]; if(LAYER_ON[k] && (k==="aerial"||k==="ghost")) LAYER_ON[k==="aerial"?"ghost":"aerial"] = false; document.querySelectorAll("#layers .lyr").forEach(x=>x.setAttribute("aria-pressed", String(!!LAYER_ON[x.dataset.k]))); drawSheet(current); });
   $("#tabSheet").addEventListener("click", ()=>setView("sheet")); $("#tabModel").addEventListener("click", ()=>setView("model"));
   $("#btnRetry").addEventListener("click", retryMissing);
-  $("#btnSavePdf").addEventListener("click", ()=>{ if(current) drawSheet(current); window.print(); });
+  $("#btnSavePdf").addEventListener("click", ()=>{ if(current){ setView("sheet"); drawSheet(current); } window.print(); });
   $("#btnShare").addEventListener("click", async ()=>{ if(!current) return; const u = shareURL(current); try { await navigator.clipboard.writeText(u); toast("Link copied. It re-runs the screen with today's public data."); } catch(e){ prompt("Copy this link", u); } });
   $("#btnList").addEventListener("click", addCurrentToList);
   $("#slClear").addEventListener("click", ()=>{ LIST = []; saveList(); if(current) $("#btnList").textContent = "Add to short list"; });
