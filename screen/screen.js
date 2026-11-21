@@ -267,8 +267,8 @@ async function fetchTerrain(site){
   } catch(e) {}
   return {nx:tif.W, ny:tif.H, x0, ytop:y1, dx:w/tif.W, dy:h/tif.H, z, lidar};
 }
-async function fetchLines(c){
-  const d = CONFIG.powerRadiusMi*5280/FT/R*180/Math.PI, k = Math.cos(c.lat*Math.PI/180);
+async function fetchLines(c, mi){
+  const d = mi*5280/FT/R*180/Math.PI, k = Math.cos(c.lat*Math.PI/180);
   const env = [c.lng-d/k, c.lat-d, c.lng+d/k, c.lat+d];
   const j = await getJSON(CONFIG.lines + "/query?" + qs({geometry:env.join(","), geometryType:"esriGeometryEnvelope", inSR:4326, spatialRel:"esriSpatialRelIntersects", outFields:"VOLTAGE,VOLT_CLASS,STATUS",
     returnGeometry:true, outSR:4326, geometryPrecision:6, maxAllowableOffset:0.00002, f:"json"}), {}, 20000);
@@ -403,9 +403,9 @@ function terrainStats(s, g){
 function powerStats(s, lines){
   let best = null;
   for(const l of lines) for(const p of l.paths){ const d = lineToPolyDist(p, s.rings); if(!best || d < best.d) best = {d, kv:l.kv}; }
-  const within = lines.filter(l=>l.paths.some(p=>lineToPolyDist(p, s.rings) <= CONFIG.powerRadiusMi*5280));
+  const within = lines.filter(l=>l.paths.some(p=>lineToPolyDist(p, s.rings) <= (s.powerMi||CONFIG.powerRadiusMi)*5280));
   const kvs = [...new Set(within.map(l=>l.kv).filter(Boolean))].sort((a,b)=>b-a);
-  return {lines, nearest:best && best.d <= CONFIG.powerRadiusMi*5280 ? best : null, count:within.length, kvs};
+  return {lines, nearest:best && best.d <= (s.powerMi||CONFIG.powerRadiusMi)*5280 ? best : null, count:within.length, kvs};
 }
 
 /* ===== Run a screen ===== */
@@ -432,6 +432,7 @@ function siteFromSketch(ringFt, base){
   const s = newSite({sample:false, sketch:true, input:"sketch", kind:"Sketched outline", center, P:P2, rings:[ringLL.map(P2.f)], county:base.county, legal:null, propId:null, situs:null, source:"Outline sketched on this page", parcels:[]});
   s.title = "Sketched tract"; s.area = base.area || "Texas"; s.sketchLL = ringLL; return s;
 }
+const yrs = (a,b) => { const y1 = a ? new Date(a).getUTCFullYear() : null, y2 = new Date(b).getUTCFullYear(); return y1 && y1 !== y2 ? y1 + "–" + y2 : String(y2); };
 const titleCase = t => String(t||"").toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());
 
 async function screenLayers(s, only){
@@ -449,7 +450,7 @@ async function screenLayers(s, only){
       return {items, crossing, names:[...new Set(items.map(i=>i.name).filter(Boolean))]}; }),
     job("soils", async()=>({units: await fetchSoils(ringsLL)})),
     job("terrain", async()=>{ const g = await fetchTerrain(s); const st = terrainStats(s, g); if(!st.ok) throw new Error("no elevation cells on the tract"); return {grid:g, ...st}; }),
-    job("power", async()=>{ const lines = (await fetchLines(c)).map(l=>({kv:l.kv, status:l.status, paths:toFt(l.pathsLL)})); return powerStats(s, lines); }),
+    job("power", async()=>{ s.powerMi = (TYPE==="dc" || s.acres >= 40) ? 5 : CONFIG.powerRadiusMi; const lines = (await fetchLines(c, s.powerMi)).map(l=>({kv:l.kv, status:l.status, paths:toFt(l.pathsLL)})); return powerStats(s, lines); }),
     job("juris", async()=>fetchCity(c)),
     job("adj", async()=>{ if(s.sketch) return {items:[]}; const pad = 0.15, w = b[0]-a[0], h = b[1]-a[1];
       const nb = await fetchNeighbors([a[0]+w*pad, a[1]+h*pad, b[0]-w*pad, b[1]-h*pad], s.oid);
@@ -477,7 +478,7 @@ function renderReadout(s){
     so && so.status==="ok" && so.units.length ? `${so.units.length} map unit${so.units.length>1?"s":""}. Hydrologic group ${esc(so.units[0].hyd||"n/a")}. A screening hint, not a geotechnical report.` : "", stateOf(s,"soils")));
   const t = L.terrain; rows.push(readoutRow("terrain","Terrain (public lidar)", t && t.status==="ok" ? `${fmt(t.relief,0)} ft of relief, average slope ~${fmt(t.meanSlope,1)}%` : esc(failText(t)),
     t && t.status==="ok" ? `${t.fallDir ? "Ground generally falls toward the " + t.fallDir + ". " : "Nearly level overall. "}Approximate, from USGS 3DEP. Not a design topo.` : "", stateOf(s,"terrain")));
-  const pw = L.power; rows.push(readoutRow("power","Transmission lines", pw && pw.status==="ok" ? (pw.nearest ? (pw.nearest.d===0 ? "A mapped line crosses the tract" : `Nearest mapped line ~${fmt(pw.nearest.d/5280,1)} mi away`) : `None mapped within ${CONFIG.powerRadiusMi} miles`) : esc(failText(pw)),
+  const pw = L.power; rows.push(readoutRow("power","Transmission lines", pw && pw.status==="ok" ? (pw.nearest ? (pw.nearest.d===0 ? "A mapped line crosses the tract" : `Nearest mapped line ~${fmt(pw.nearest.d/5280,1)} mi away`) : `None mapped within ${s.powerMi||CONFIG.powerRadiusMi} miles`) : esc(failText(pw)),
     pw && pw.status==="ok" && pw.nearest ? `${pw.nearest.kv ? fmt(pw.nearest.kv,0)+" kV class. " : ""}Proximity only. Says nothing about available capacity.` : pw && pw.status==="ok" ? "Proximity only." : "", stateOf(s,"power")));
   const j = L.juris; rows.push(readoutRow("juris","Jurisdiction", j && j.status==="ok" ? (j.text ? esc(j.text) : j.name ? "City of " + esc(j.name) : "Outside mapped city limits") : esc(failText(j)),
     j && j.status==="ok" ? (j.name ? "Zoning is set by the city. This is a mapped limit, not a zoning finding." : "Could still sit in a city's ETJ, which controls platting. Check with the county and nearby cities.") : "", stateOf(s,"juris")));
@@ -617,7 +618,7 @@ function drawSheet(s){
   // sources + disclaimer at bottom of the title block
   let by = Math.max(ty + 22, 470); o.push(`<line x1="${tx+16}" y1="${by}" x2="${tx+tw-16}" y2="${by}" stroke="#2d465b"/>`); by += 16;
   const srcTxt = s.sample ? "Illustrative sample. Shapes, figures and sources are examples only." : "Sources: TxGIO parcels, city limits and NHD; FEMA NFHL; USFWS NWI; USDA NRCS SSURGO; USGS 3DEP; HIFLD; Esri World Imagery.";
-  for(const l of wrapTxt(srcTxt, 44)){ o.push(`<text x="${tx+16}" y="${by}" font-family="IBM Plex Mono, monospace" font-size="8.6" fill="#93aab8">${esc(l)}</text>`); by += 11; }
+  for(const l of wrapTxt(srcTxt, 38)){ o.push(`<text x="${tx+16}" y="${by}" font-family="IBM Plex Mono, monospace" font-size="8.6" fill="#93aab8">${esc(l)}</text>`); by += 11; }
   by += 6;
   for(const l of wrapTxt("NOT A SURVEY. Not certified. Not for conveyance, design or construction. Appraisal parcel lines can be off by tens of feet. All figures approximate.", 40)){ o.push(`<text x="${tx+16}" y="${by}" font-family="IBM Plex Sans, sans-serif" font-size="9.6" font-weight="600" fill="#f2b9ba">${esc(l)}</text>`); by += 12; }
   by += 8; o.push(`<text x="${tx+16}" y="${Math.min(by,728)}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#d5e3e8">Adams Surveying Company · (469) 317-0250</text>`);
@@ -637,23 +638,28 @@ function drawModel(){
   const zmid = (t.min+t.max)/2, cx = g.x0 + g.nx*g.dx/2, cyy = g.ytop - g.ny*g.dy/2;
   const pr = (x,y,z) => { const X = x-cx, Y = y-cyy, Z = (z-zmid)*ex; const xr = X*cy0 - Y*sy0, yr = X*sy0 + Y*cy0; return [W/2 + xr*sc, H*0.56 - (yr*sp + Z*cp)*sc, -(yr*cp - Z*sp)]; };
   const step = Math.max(1, Math.round(Math.max(g.nx,g.ny)/80)), quads = [];
-  for(let j=0;j<g.ny-step;j+=step) for(let i=0;i<g.nx-step;i+=step){
-    const z = [g.z[j*g.nx+i], g.z[j*g.nx+i+step], g.z[(j+step)*g.nx+i+step], g.z[(j+step)*g.nx+i]]; if(z.some(isNaN)) continue;
-    const xs = [g.x0+(i+.5)*g.dx, g.x0+(i+step+.5)*g.dx], ys = [g.ytop-(j+.5)*g.dy, g.ytop-(j+step+.5)*g.dy];
+  const fl = s.layers.flood && s.layers.flood.status==="ok" ? s.layers.flood.polys.filter(p=>p.sfha) : [];
+  const key = step + ":" + fl.length + ":" + s.rings.length + ":" + s.acres.toFixed(3);
+  if(!s._mq || s._mq.key !== key){ const meta = [];
+    for(let j=0;j<g.ny-step;j+=step) for(let i=0;i<g.nx-step;i+=step){
+      const z = [g.z[j*g.nx+i], g.z[j*g.nx+i+step], g.z[(j+step)*g.nx+i+step], g.z[(j+step)*g.nx+i]]; if(z.some(isNaN)) continue;
+      const xs = [g.x0+(i+.5)*g.dx, g.x0+(i+step+.5)*g.dx], ys = [g.ytop-(j+.5)*g.dy, g.ytop-(j+step+.5)*g.dy], mx = (xs[0]+xs[1])/2, my = (ys[0]+ys[1])/2;
+      const dzx = (z[1]-z[0]+z[2]-z[3])/(2*step*g.dx), dzy = (z[0]-z[3]+z[1]-z[2])/(2*step*g.dy);
+      const shade = Math.max(0.5, Math.min(1.1, 0.86 - (dzx*0.7 - dzy*0.55)*ex*2.2));
+      meta.push({z, xs, ys, shade, inT:inRings(mx,my,s.rings), inF:fl.some(p=>inRings(mx,my,p.rings)), zr:((z[0]+z[2])/2 - t.min)/(t.relief||1)}); }
+    s._mq = {key, meta}; }
+  for(const m of s._mq.meta){ const {z,xs,ys} = m;
     const P = [pr(xs[0],ys[0],z[0]), pr(xs[1],ys[0],z[1]), pr(xs[1],ys[1],z[2]), pr(xs[0],ys[1],z[3])];
-    const dzx = (z[1]-z[0]+z[2]-z[3])/(2*step*g.dx), dzy = (z[0]-z[3]+z[1]-z[2])/(2*step*g.dy), shade = Math.max(0.25, Math.min(1, 0.72 - (dzx*0.6 - dzy*0.5)*ex*4));
-    const inT = inRings((xs[0]+xs[1])/2, (ys[0]+ys[1])/2, s.rings), zr = ((z[0]+z[2])/2 - t.min)/(t.relief||1);
-    quads.push({P, d:(P[0][2]+P[2][2])/2, shade, inT, zr});
-  }
+    quads.push({P, d:(P[0][2]+P[2][2])/2, shade:m.shade, inT:m.inT, inF:m.inF, zr:m.zr}); }
   quads.sort((a,b)=>a.d-b.d);
   for(const q of quads){ ctx.beginPath(); ctx.moveTo(q.P[0][0],q.P[0][1]); for(let k=1;k<4;k++) ctx.lineTo(q.P[k][0],q.P[k][1]); ctx.closePath();
-    const base = q.inT ? [222,206,186] : [120,140,150], hi = q.inT ? [146,26,29] : [80,100,112], m = q.zr*0.25;
+    const base = q.inF ? (q.inT ? [150,182,214] : [92,124,160]) : q.inT ? [226,212,192] : [128,146,156], hi = q.inT ? [168,120,90] : [96,114,126], m = q.zr*0.3;
     const col = base.map((c,k)=>Math.round((c*(1-m)+hi[k]*m)*q.shade)); ctx.fillStyle = `rgb(${col})`; ctx.fill(); ctx.strokeStyle="rgba(14,31,45,.12)"; ctx.lineWidth=.5; ctx.stroke(); }
   // tract outline draped
   ctx.strokeStyle = "#ff5a5f"; ctx.lineWidth = 2.5; ctx.beginPath();
   for(const r of s.rings){ r.forEach((p,i)=>{ const z = gridAt(g,p[0],p[1]); const q = pr(p[0],p[1],isNaN(z)?t.min:z+0.5); i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]); }); ctx.closePath(); }
   ctx.stroke();
-  $("#modelCap").textContent = `Public lidar surface (USGS 3DEP), vertical exaggerated 3×, ~${t.cellFt} ft cells. Drag to turn. Approximate. Not a design topo.`;
+  $("#modelCap").textContent = `Public lidar surface (USGS 3DEP), vertical exaggerated 3×, ~${t.cellFt} ft cells${s.layers.flood&&s.layers.flood.status==="ok"&&s.layers.flood.shareSFHA>0.005?"; blue = FEMA mapped floodplain (approx.)":""}. Drag to turn. Approximate. Not a design topo.`;
 }
 function modelLoop(){ if(VIEW!=="model") return; if(MODEL.auto && !MODEL.drag) MODEL.yaw += 0.0035; drawModel(); MODEL.raf = requestAnimationFrame(modelLoop); }
 function initModelInput(){ const cv = $("#model");
@@ -692,7 +698,7 @@ function powerContextHTML(s){
   const show = TYPE==="dc" || TYPE==="ind" || (s.sample && (s.type==="dc"||s.type==="ind")) || s.acres >= 40; if(!show) return "";
   const near = pw.nearest;
   return `<div class="b-card power"><h3>Power context, from public maps</h3>
-    <p>${near ? (near.d===0 ? "A mapped transmission line crosses this tract" : `The nearest mapped transmission line is about ${fmt(near.d/5280,1)} miles away`) + (near.kv?` (${fmt(near.kv,0)} kV class)`:"") + "." : `No transmission line is mapped within ${CONFIG.powerRadiusMi} miles.`} ${pw.count>1?`${pw.count} mapped lines fall within ${CONFIG.powerRadiusMi} miles${pw.kvs.length?`, ${pw.kvs.map(k=>fmt(k,0)+" kV").join(", ")} classes`:""}.`:""}</p>
+    <p>${near ? (near.d===0 ? "A mapped transmission line crosses this tract" : `The nearest mapped transmission line is about ${fmt(near.d/5280,1)} miles away`) + (near.kv?` (${fmt(near.kv,0)} kV class)`:"") + "." : `No transmission line is mapped within ${s.powerMi||CONFIG.powerRadiusMi} miles.`} ${pw.count>1?`${pw.count} mapped lines fall within ${s.powerMi||CONFIG.powerRadiusMi} miles${pw.kvs.length?`, ${pw.kvs.map(k=>fmt(k,0)+" kV").join(", ")} classes`:""}.`:""}</p>
     <p>A nearby line is not capacity. Whether a load can be served, when, and at what cost is answered by the transmission provider and ERCOT through the large-load process, not by a map. For loads of 75 MW or more, PUCT rules require a study fee and financial security before a request is studied.</p>
     <p><a href="${CONFIG.ercotPlanning}" target="_blank" rel="noopener">ERCOT regional planning filings</a> &middot; <a href="${CONFIG.puctLargeLoad}" target="_blank" rel="noopener">PUCT large-load rule (16 TAC §25.194)</a></p>
     ${pw.nearest && pw.nearest.d < 300 ? "<p>A line this close usually means a recorded transmission easement on or next to the tract. Its width and restrictions come from the recorded instrument, located by survey.</p>" : ""}</div>`;
@@ -712,8 +718,8 @@ function renderBrief(s){
   const t = L.terrain; const lid = t&&t.grid&&t.grid.lidar;
   row("Terrain", t&&t.status==="ok"?`Ground runs from about ${fmt(t.min,0)} to ${fmt(t.max,0)} ft (${fmt(t.relief,0)} ft of relief). Average slope about ${fmt(t.meanSlope,1)}%; about ${fmt((t.over5||0)*100,0)}% of the tract is steeper than 5%. ${t.fallDir?`Ground generally falls toward the ${t.fallDir}`:"Nearly level overall"}${t.lowSide?`, with the lowest ground on the ${t.lowSide} side`:""}. Rough earthwork to bring the tract to one plane following its natural fall: about ${fmt(sig2(t.balanceCY),0)} cubic yards each of cut and fill.`:"",
     "Approximate, from public lidar resampled to about " + (t&&t.cellFt?t.cellFt:"–") + "-ft cells. Not a design topo, and not bid quantities: no pavement section, shrink-swell, stripping or building pads.",
-    s.sample?"Illustrative sample":`USGS 3DEP${lid&&lid.project?`; lidar project ${esc(lid.project)}`:""}${lid&&lid.end?`, collected ${esc(lid.start?new Date(lid.start).getFullYear()+"–":"")}${esc(new Date(lid.end).getFullYear())}`:""}${lid&&lid.gsd?`, ${esc(lid.gsd)} m DEM`:""}`, st("terrain"));
-  const pw = L.power; row("Transmission", pw&&pw.status==="ok"?(pw.nearest?(pw.nearest.d===0?"A mapped transmission line crosses the tract.":`Nearest mapped line about ${fmt(pw.nearest.d/5280,1)} miles away`)+(pw.nearest.kv?`, ${fmt(pw.nearest.kv,0)} kV class.`:"."):`None mapped within ${CONFIG.powerRadiusMi} miles.`):"",
+    s.sample?"Illustrative sample":`USGS 3DEP${lid&&lid.project?`; lidar project ${esc(lid.project)}`:""}${lid&&lid.end?`, collected ${esc(yrs(lid.start, lid.end))}`:""}${lid&&lid.gsd?`, ${esc(lid.gsd)} m DEM`:""}`, st("terrain"));
+  const pw = L.power; row("Transmission", pw&&pw.status==="ok"?(pw.nearest?(pw.nearest.d===0?"A mapped transmission line crosses the tract.":`Nearest mapped line about ${fmt(pw.nearest.d/5280,1)} miles away`)+(pw.nearest.kv?`, ${fmt(pw.nearest.kv,0)} kV class.`:"."):`None mapped within ${s.powerMi||CONFIG.powerRadiusMi} miles.`):"",
     "Proximity from a national public map. It says nothing about available capacity, service, cost or timing.", s.sample?"Illustrative sample":"HIFLD Electric Power Transmission Lines (public dataset, last edited 2023)", st("power"));
   const j = L.juris; row("Jurisdiction", j&&j.status==="ok"?(j.text?esc(j.text):j.name?`Inside mapped city limits of ${esc(j.name)}. Zoning, platting and permits run through the city. <a href="https://www.google.com/search?q=${encodeURIComponent("City of "+j.name+" Texas zoning map")}" target="_blank" rel="noopener">Find the city's zoning map</a>.`:"Outside mapped city limits. A city's extraterritorial jurisdiction may still control platting; county rules apply to roads and drainage."):"",
     "A mapped city limit, not a zoning determination or a city verification letter.", s.sample?"Illustrative sample":`TxGIO / Comptroller city boundaries${j&&j.edited?`, edited ${esc(String(j.edited).split(" ")[0])}`:""}`, st("juris"));
@@ -834,7 +840,7 @@ function summary(s){ const L = s.layers, ok = k => L[k] && L[k].status==="ok";
     wet: ok("wet") ? +(L.wet.share*100).toFixed(1) : null, stream: ok("water") ? L.water.crossing : null,
     relief: ok("terrain") ? +L.terrain.relief.toFixed(0) : null, slope: ok("terrain") ? +L.terrain.meanSlope.toFixed(1) : null,
     soil: ok("soils") && L.soils.units[0] ? L.soils.units[0].name.split(",")[0] : null,
-    line: ok("power") ? (L.power.nearest ? +(L.power.nearest.d/5280).toFixed(1) : ">"+CONFIG.powerRadiusMi) : null, kv: ok("power") && L.power.nearest ? L.power.nearest.kv : null,
+    line: ok("power") ? (L.power.nearest ? +(L.power.nearest.d/5280).toFixed(1) : ">"+(s.powerMi||CONFIG.powerRadiusMi)) : null, kv: ok("power") && L.power.nearest ? L.power.nearest.kv : null,
     juris: ok("juris") ? (L.juris.text || (L.juris.name ? "City of "+L.juris.name : "Outside city limits")) : null,
     url: shareURL(s), date: new Date().toISOString().slice(0,10) }; }
 function addCurrentToList(){ if(!current) return; const sum = summary(current); LIST = LIST.filter(x=>x.key!==sum.key); LIST.push(sum); saveList(); $("#btnList").textContent = "On your short list"; toast("Added to your short list"); }
