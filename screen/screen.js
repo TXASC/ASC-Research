@@ -444,7 +444,10 @@ async function screenLayers(s, only){
   const [x0,y0,x1,y1] = s.frame, a = s.P.i([x0,y0]), b = s.P.i([x1,y1]), env = [a[0],a[1],b[0],b[1]];
   const c = s.center, toFt = rr => rr.map(r=>r.map(s.P.f));
   const job = async (key, fn) => { if(only && !only.includes(key)) return; setStatus(key,"wait"); L[key] = {status:"wait"}; renderReadout(s);
-    try { L[key] = {status:"ok", ...(await fn())}; } catch(e){ L[key] = {status:"fail", err:String(e.message||e)}; }
+    for(let n = 0; ; n++){ try { L[key] = {status:"ok", ...(await fn())}; break; }
+      catch(e){ const msg = String(e.message||e), final = /no elevation cells/.test(msg);
+        if(final || n >= 2 || s !== current){ L[key] = {status:"fail", err:msg}; break; }
+        await new Promise(r=>setTimeout(r, 800 * 2**n + Math.random()*500)); } }
     if(s !== current) return; setStatus(key, L[key].status); renderReadout(s); drawSheet(s); renderInsights(s); };
   const tasks = [
     job("flood", async()=>{ const f = await fetchFlood(env, [c.lng,c.lat]); const polys = f.polys.map(p=>({...p, rings:toFt(p.ringsLL)})); return {polys, pointZone:f.pointZone, panel:f.panel, ...floodStats(s, polys)}; }),
@@ -505,8 +508,12 @@ function readoutRow(k, label, value, sub, st){
   const [ico, src, c] = RO_META[k] || ["sheet","",""], m = roMeter(k), sig = value + "|" + st, fresh = RO_PREV[k] !== undefined && RO_PREV[k] !== sig && st==="ok"; RO_PREV[k] = sig;
   return `<li class="ro ${st}${fresh?" fresh":""}" style="--c:${c}"><span class="ro-ico" aria-hidden="true">${roThumb(k, st) || `<svg viewBox="0 0 24 24">${WF_ICO[ico]}</svg>`}<span class="st ${st}"></span></span><div class="ro-body"><div class="ro-k">${esc(label)}<span class="ro-src">${esc(src)}</span></div><div class="ro-v">${value}</div>${m?`<div class="ro-m" title="${esc(m.lab)}"><i style="width:${Math.max(2,Math.round(m.v*100))}%"></i></div>`:""}${sub?`<div class="ro-s">${sub}</div>`:""}</div></li>`; }
 function failText(l){ return l && l.status==="fail" ? "The public service didn't answer, so this layer is left off. Nothing was assumed." : "Loading…"; }
+function retryMissing(){ const s = current; if(!s) return; const keys = STEPS.map(x=>x[0]).filter(k=>k!=="parcel" && s.layers[k] && s.layers[k].status==="fail");
+  if(s.layers.adj && s.layers.adj.status==="fail") keys.push("adj"); if(!keys.length) return; toast("Asking the public services again…"); screenLayers(s, keys); }
+function renderRetry(s){ const b = $("#retryBox"); if(!b) return; const miss = STEPS.filter(([k])=>k!=="parcel" && s.layers[k] && s.layers[k].status==="fail");
+  b.hidden = !miss.length || s.sample; if(miss.length) $("#retryTxt").textContent = `${miss.length===1?"One public service":miss.length+" public services"} didn't answer: ${miss.map(x=>x[1]).join(", ")}.`; }
 function renderReadout(s){
-  RO_S = s; const L = s.layers, rows = [];
+  RO_S = s; renderRetry(s); const L = s.layers, rows = [];
   const parcelSub = s.sample ? "Illustrative sample, not a real parcel" : s.sketch ? "Your sketched outline" : `Appraisal record ${s.propId?("#"+esc(s.propId)):""} &middot; ${esc(titleCase(s.source||""))}${s.taxYear?(" "+esc(s.taxYear)):""}`;
   rows.push(readoutRow("parcel", s.added.length ? "Assemblage" : "Parcel", `${acTxt(s.acres)} acres <span class="opt">(GIS, approx.)</span>`, parcelSub + (s.legalAcres && !s.added.length ? ` &middot; ${fmt(s.legalAcres,2)} ac on the appraisal roll` : ""), "ok"));
   const f = L.flood; rows.push(readoutRow("flood","FEMA floodplain", f && f.status==="ok" ? (f.shareSFHA>0.005 ? `About ${fmt(f.shareSFHA*100,0)}% in the mapped 1% annual-chance floodplain` : "Outside the mapped 1% annual-chance floodplain") : esc(failText(f)),
@@ -1226,6 +1233,7 @@ function init(){
   $("#bulkGo").addEventListener("click", runBulk);
   $("#layers").addEventListener("click", e=>{ const b = e.target.closest(".lyr"); if(!b) return; const k = b.dataset.k; LAYER_ON[k] = !LAYER_ON[k]; if(LAYER_ON[k] && (k==="aerial"||k==="ghost")) LAYER_ON[k==="aerial"?"ghost":"aerial"] = false; document.querySelectorAll("#layers .lyr").forEach(x=>x.setAttribute("aria-pressed", String(!!LAYER_ON[x.dataset.k]))); drawSheet(current); });
   $("#tabSheet").addEventListener("click", ()=>setView("sheet")); $("#tabModel").addEventListener("click", ()=>setView("model"));
+  $("#btnRetry").addEventListener("click", retryMissing);
   $("#btnShare").addEventListener("click", async ()=>{ if(!current) return; const u = shareURL(current); try { await navigator.clipboard.writeText(u); toast("Link copied. It re-runs the screen with today's public data."); } catch(e){ prompt("Copy this link", u); } });
   $("#btnList").addEventListener("click", addCurrentToList);
   $("#slClear").addEventListener("click", ()=>{ LIST = []; saveList(); if(current) $("#btnList").textContent = "Add to short list"; });
