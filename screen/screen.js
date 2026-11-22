@@ -1129,7 +1129,7 @@ function mainSoil(units){ if(!units || !units.length) return null; const nm = u 
 function summary(s){ const L = s.layers, ok = k => L[k] && L[k].status==="ok", st = {};
   for(const [k] of STEPS) if(k!=="parcel") st[k] = L[k] ? L[k].status : "wait";
   return { v:2, key:listKey(s), title:s.title, area:s.area, sample:!!s.sample, pin:!!s.pin, entered: s.sample ? null : s.sketch ? "sketched outline" : s.input, propId: s.propId || null,
-    acres: s.pin ? null : +s.acres.toFixed(2), feed: s.sample || s.pin ? null : (acreage(s).rows[1] || [])[1] || null, gap: !!acreage(s).gap, st,
+    acres: s.pin ? null : +s.acres.toFixed(2), feed: s.sample || s.pin ? null : ((acreage(s).rows.find(r=>/^Roll acreage/.test(r[0])) || [])[1] || null), gap: !!acreage(s).gap, st,
     flood: ok("flood") ? +(L.flood.shareSFHA*100).toFixed(0) : null, floodway: ok("flood") ? +(L.flood.shareFloodway*100).toFixed(0) : null,
     vzone: ok("flood") && (L.flood.zonesOnTract||[]).some(z=>/^V/.test(z)), femaYear: ok("flood") && L.flood.firm && L.flood.firm.effMs ? new Date(L.flood.firm.effMs).getUTCFullYear() : null,
     wet: ok("wet") ? +(L.wet.share*100).toFixed(1) : null, stream: ok("water") ? (L.water.share > 0.02 ? `${fmt(L.water.share*100,0)}% under water` : L.water.crossing ? "Yes" : "No") : null,
@@ -1175,7 +1175,7 @@ async function submitRequest(e){
     acreage: s ? acreage(s).rows.map(([l,v])=>({source:l, acres:+v.toFixed(3)})) : [], acreage_gap: s ? acreage(s).gap : null,
     road_touch: L.road && L.road.status==="ok" ? L.road.touches : null, access_verified: false };
   const row = { kind:"request", goal:(d.proposal?"packet+proposal:":"packet:")+STAGE, site_type:TYPE || (s&&s.sample?s.type:null), survey: rec ? (rec.pri===SURVEYS.none ? (rec.add?rec.add.key:"unsure") : rec.pri.key) : null,
-    location: clip(siteRef, 400), lat: s ? +s.center.lat.toFixed(6) : null, lng: s ? +s.center.lng.toFixed(6) : null, acres: s ? +s.acres.toFixed(2) : null,
+    location: clip(siteRef, 400), lat: s ? +s.center.lat.toFixed(6) : null, lng: s ? +s.center.lng.toFixed(6) : null, acres: s && !s.pin ? +s.acres.toFixed(2) : null,
     flood_zones: L.flood && L.flood.status==="ok" ? clip(L.flood.zonesOnTract.join(", ") || "X", 200) : null, pct_outside_floodplain: L.flood && L.flood.status==="ok" ? +((1-L.flood.shareSFHA)*100).toFixed(1) : null,
     county: s ? clip(s.county,80) : null, legal: s ? clip(s.legal,1000) : null, prop_id: s ? clip(s.propId,80) : null, is_sample: !!(s && s.sample),
     name: d.name.slice(0,200), email: d.email.slice(0,320), phone: clip(d.phone,40), company: clip(d.company,200), note: clip(d.note,1000),
