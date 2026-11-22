@@ -26,6 +26,7 @@ const CONFIG = {
   vicinity: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/export",
   ercotPlanning: "https://www.ercot.com/gridinfo/planning",
   puctLargeLoad: "https://ftp.puc.texas.gov/public/puct-info/agency/rulesnlaws/subrules/electric/25.194/25.194.pdf",
+  roads: ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"],
   powerRadiusMi: 2
 };
 
@@ -41,6 +42,8 @@ const ICON = {
 const TYPES = [["ind","Industrial"],["dc","Large campus"],["mf","Multifamily"],["retail","Retail or commercial"],["sf","Residential lot"],["land","Land or master-planned"]];
 const STAGES = [["early","Just looking"],["option","Buying it"],["design","Designing or building on it"],["sell","Selling it"],["finance","Financing it"]];
 let TYPE = null, STAGE = "early";
+// test mode: read once, so it survives the address bar rewriting the query; it never goes into share links
+const DRY = /[?&]dry=1/.test(location.search);
 
 /* ===== Helpers ===== */
 const $ = s => document.querySelector(s);
@@ -127,7 +130,13 @@ async function parseLocation(raw){
   if(!g) throw new Error("We couldn't place that address. Add the city, or paste coordinates or a map link.");
   return {...g, kind:"Address"};
 }
-const inTexas = p => p.lat > 25.8 && p.lat < 36.6 && p.lng > -106.7 && p.lng < -93.5;
+// Texas outline (US Census cartographic boundary, simplified to ~1 km). The coast and rivers are coarse at this
+// scale, so a point within ~3 km of the line is let through and the statewide parcel lookup decides.
+const TX_OUTLINE = [[[-103.004,36.501],[-100,36.5],[-100,34.561],[-99.928,34.577],[-99.709,34.387],[-99.601,34.374],[-99.58,34.416],[-99.519,34.415],[-99.44,34.374],[-99.397,34.378],[-99.382,34.457],[-99.318,34.408],[-99.26,34.404],[-99.275,34.385],[-99.21,34.337],[-99.192,34.216],[-99.128,34.219],[-99.12,34.202],[-99.077,34.211],[-99.045,34.198],[-98.988,34.221],[-98.919,34.182],[-98.765,34.136],[-98.69,34.133],[-98.647,34.165],[-98.571,34.145],[-98.485,34.062],[-98.413,34.085],[-98.403,34.123],[-98.363,34.157],[-98.169,34.114],[-98.108,34.154],[-98.094,34.111],[-98.123,34.081],[-98.087,34.003],[-98.019,33.994],[-97.972,34.006],[-97.947,33.989],[-97.972,33.937],[-97.954,33.938],[-97.968,33.882],[-97.879,33.85],[-97.835,33.858],[-97.688,33.987],[-97.656,33.989],[-97.588,33.953],[-97.599,33.918],[-97.559,33.897],[-97.502,33.92],[-97.459,33.904],[-97.462,33.849],[-97.444,33.824],[-97.372,33.819],[-97.333,33.874],[-97.301,33.88],[-97.254,33.864],[-97.247,33.9],[-97.211,33.916],[-97.179,33.892],[-97.171,33.836],[-97.207,33.81],[-97.164,33.729],[-97.125,33.717],[-97.085,33.744],[-97.096,33.799],[-97.049,33.818],[-97.089,33.854],[-97.042,33.837],[-96.985,33.886],[-96.996,33.949],[-96.974,33.936],[-96.924,33.959],[-96.906,33.95],[-96.884,33.868],[-96.852,33.847],[-96.83,33.875],[-96.784,33.863],[-96.769,33.827],[-96.705,33.835],[-96.676,33.909],[-96.586,33.895],[-96.629,33.845],[-96.572,33.819],[-96.533,33.823],[-96.504,33.774],[-96.428,33.779],[-96.364,33.692],[-96.321,33.695],[-96.296,33.764],[-96.227,33.748],[-96.177,33.76],[-96.149,33.837],[-96.098,33.831],[-96.102,33.848],[-96.048,33.837],[-95.94,33.861],[-95.937,33.887],[-95.833,33.835],[-95.8,33.861],[-95.754,33.854],[-95.757,33.892],[-95.685,33.89],[-95.599,33.934],[-95.563,33.932],[-95.538,33.88],[-95.294,33.875],[-95.255,33.903],[-95.23,33.961],[-95.133,33.937],[-95.05,33.864],[-94.971,33.862],[-94.946,33.813],[-94.871,33.746],[-94.774,33.755],[-94.709,33.687],[-94.648,33.688],[-94.645,33.668],[-94.587,33.679],[-94.519,33.617],[-94.458,33.645],[-94.458,33.599],[-94.418,33.577],[-94.386,33.582],[-94.393,33.551],[-94.357,33.544],[-94.34,33.567],[-94.311,33.551],[-94.3,33.576],[-94.225,33.553],[-94.185,33.593],[-94.142,33.578],[-94.124,33.552],[-94.103,33.57],[-94.045,33.551],[-94.042,31.992],[-94.013,31.982],[-93.973,31.92],[-93.909,31.893],[-93.876,31.822],[-93.823,31.775],[-93.83,31.746],[-93.801,31.698],[-93.826,31.661],[-93.815,31.623],[-93.841,31.599],[-93.787,31.527],[-93.74,31.522],[-93.729,31.492],[-93.751,31.469],[-93.701,31.438],[-93.704,31.411],[-93.675,31.398],[-93.665,31.356],[-93.686,31.31],[-93.643,31.27],[-93.622,31.271],[-93.6,31.174],[-93.532,31.185],[-93.553,31.097],[-93.525,31.07],[-93.518,31.024],[-93.564,31.006],[-93.568,30.978],[-93.525,30.93],[-93.557,30.911],[-93.568,30.879],[-93.553,30.825],[-93.618,30.742],[-93.629,30.68],[-93.672,30.658],[-93.679,30.6],[-93.729,30.574],[-93.74,30.539],[-93.715,30.519],[-93.697,30.441],[-93.744,30.397],[-93.765,30.333],[-93.708,30.289],[-93.704,30.243],[-93.722,30.21],[-93.69,30.142],[-93.733,30.082],[-93.701,30.065],[-93.79,29.988],[-93.815,29.921],[-93.93,29.797],[-93.837,29.679],[-94.002,29.681],[-94.135,29.647],[-94.594,29.468],[-94.695,29.416],[-94.731,29.369],[-94.785,29.375],[-94.673,29.477],[-94.594,29.492],[-94.566,29.532],[-94.533,29.518],[-94.494,29.525],[-94.548,29.572],[-94.742,29.526],[-94.77,29.548],[-94.709,29.625],[-94.695,29.694],[-94.695,29.758],[-94.738,29.762],[-94.756,29.782],[-94.817,29.757],[-94.853,29.722],[-94.867,29.679],[-94.921,29.658],[-94.943,29.698],[-95.007,29.659],[-95.014,29.629],[-94.982,29.601],[-95.018,29.558],[-94.982,29.511],[-94.91,29.497],[-94.932,29.45],[-94.892,29.433],[-94.892,29.308],[-94.921,29.282],[-94.953,29.29],[-95.1,29.174],[-95.111,29.196],[-95.158,29.189],[-95.165,29.113],[-95.144,29.091],[-94.878,29.286],[-94.824,29.306],[-94.824,29.345],[-94.731,29.332],[-95.111,29.089],[-95.384,28.866],[-95.438,28.859],[-95.811,28.665],[-96.22,28.492],[-96.342,28.418],[-96.443,28.318],[-96.719,28.164],[-96.888,28.031],[-97.003,27.908],[-97.211,27.596],[-97.297,27.427],[-97.372,27.153],[-97.376,26.972],[-97.347,26.796],[-97.197,26.306],[-97.157,26.083],[-97.182,26.123],[-97.2,26.249],[-97.283,26.542],[-97.369,26.556],[-97.304,26.579],[-97.39,26.801],[-97.401,27.115],[-97.362,27.352],[-97.304,27.507],[-97.121,27.799],[-97.128,27.839],[-97.082,27.913],[-97.017,27.946],[-96.92,28.094],[-96.82,28.144],[-96.791,28.189],[-96.734,28.191],[-96.608,28.281],[-96.525,28.323],[-96.439,28.343],[-96.454,28.38],[-96.421,28.405],[-96.454,28.418],[-96.622,28.319],[-96.683,28.315],[-96.705,28.349],[-96.705,28.4],[-96.769,28.411],[-96.791,28.384],[-96.791,28.312],[-96.809,28.29],[-96.787,28.255],[-96.802,28.224],[-96.935,28.124],[-97.028,28.149],[-97.039,28.186],[-97.154,28.133],[-97.215,28.076],[-97.139,28.057],[-97.053,28.106],[-97.024,28.042],[-97.186,27.831],[-97.229,27.829],[-97.25,27.876],[-97.326,27.868],[-97.34,27.883],[-97.455,27.874],[-97.494,27.884],[-97.516,27.851],[-97.473,27.824],[-97.38,27.838],[-97.394,27.783],[-97.369,27.742],[-97.254,27.697],[-97.322,27.571],[-97.412,27.321],[-97.484,27.298],[-97.509,27.275],[-97.548,27.291],[-97.498,27.309],[-97.487,27.359],[-97.516,27.362],[-97.642,27.271],[-97.627,27.243],[-97.541,27.23],[-97.423,27.264],[-97.466,26.809],[-97.48,26.807],[-97.444,26.609],[-97.416,26.553],[-97.412,26.481],[-97.38,26.48],[-97.279,26.271],[-97.311,26.23],[-97.297,26.201],[-97.301,26.148],[-97.272,26.086],[-97.2,26.077],[-97.197,26.047],[-97.154,26.062],[-97.146,25.953],[-97.229,25.959],[-97.276,25.952],[-97.276,25.936],[-97.351,25.925],[-97.372,25.84],[-97.444,25.85],[-97.469,25.884],[-97.523,25.887],[-97.545,25.934],[-97.584,25.938],[-97.649,26.022],[-97.76,26.032],[-97.8,26.06],[-97.861,26.053],[-97.886,26.066],[-97.968,26.052],[-97.983,26.067],[-98.029,26.066],[-98.04,26.041],[-98.076,26.068],[-98.148,26.056],[-98.176,26.075],[-98.198,26.056],[-98.248,26.073],[-98.277,26.099],[-98.266,26.12],[-98.324,26.121],[-98.334,26.159],[-98.388,26.158],[-98.464,26.223],[-98.496,26.213],[-98.586,26.255],[-98.654,26.236],[-98.754,26.325],[-98.79,26.332],[-98.797,26.36],[-98.826,26.37],[-98.891,26.358],[-98.966,26.398],[-99.009,26.395],[-99.038,26.413],[-99.081,26.396],[-99.113,26.434],[-99.092,26.477],[-99.128,26.525],[-99.167,26.536],[-99.21,26.724],[-99.239,26.746],[-99.268,26.843],[-99.329,26.88],[-99.321,26.907],[-99.368,26.929],[-99.393,26.961],[-99.375,26.978],[-99.415,27.017],[-99.447,27.023],[-99.451,27.068],[-99.429,27.095],[-99.44,27.151],[-99.426,27.176],[-99.44,27.25],[-99.497,27.272],[-99.494,27.303],[-99.537,27.313],[-99.504,27.339],[-99.487,27.413],[-99.497,27.439],[-99.483,27.491],[-99.53,27.499],[-99.512,27.565],[-99.555,27.614],[-99.58,27.602],[-99.605,27.642],[-99.637,27.626],[-99.67,27.66],[-99.705,27.655],[-99.77,27.732],[-99.802,27.742],[-99.813,27.774],[-99.842,27.766],[-99.878,27.799],[-99.878,27.842],[-99.903,27.864],[-99.892,27.9],[-99.939,27.941],[-99.932,27.981],[-99.993,27.995],[-100.018,28.065],[-100.054,28.084],[-100.082,28.144],[-100.208,28.19],[-100.222,28.235],[-100.247,28.234],[-100.294,28.284],[-100.287,28.317],[-100.348,28.403],[-100.337,28.443],[-100.37,28.477],[-100.337,28.502],[-100.38,28.511],[-100.413,28.552],[-100.398,28.585],[-100.448,28.609],[-100.445,28.638],[-100.499,28.662],[-100.513,28.705],[-100.506,28.741],[-100.535,28.763],[-100.549,28.826],[-100.571,28.827],[-100.603,28.902],[-100.632,28.903],[-100.653,28.943],[-100.649,29.009],[-100.675,29.1],[-100.775,29.174],[-100.764,29.186],[-100.797,29.247],[-100.879,29.282],[-100.886,29.308],[-100.947,29.347],[-101.012,29.369],[-101.059,29.459],[-101.152,29.477],[-101.174,29.515],[-101.256,29.521],[-101.252,29.625],[-101.27,29.63],[-101.292,29.572],[-101.313,29.595],[-101.306,29.641],[-101.367,29.664],[-101.414,29.757],[-101.443,29.753],[-101.475,29.781],[-101.522,29.759],[-101.547,29.797],[-101.576,29.774],[-101.708,29.763],[-101.777,29.79],[-101.798,29.783],[-101.852,29.802],[-101.931,29.79],[-101.974,29.81],[-102.035,29.804],[-102.049,29.785],[-102.143,29.803],[-102.182,29.846],[-102.229,29.844],[-102.301,29.878],[-102.351,29.863],[-102.387,29.767],[-102.509,29.784],[-102.541,29.752],[-102.566,29.761],[-102.645,29.734],[-102.67,29.742],[-102.699,29.696],[-102.692,29.676],[-102.738,29.642],[-102.738,29.599],[-102.764,29.599],[-102.771,29.548],[-102.81,29.522],[-102.807,29.494],[-102.832,29.444],[-102.825,29.4],[-102.843,29.358],[-102.878,29.354],[-102.907,29.26],[-102.871,29.241],[-102.889,29.209],[-102.954,29.176],[-102.99,29.183],[-103.015,29.125],[-103.101,29.058],[-103.115,28.985],[-103.28,28.982],[-103.331,29.022],[-103.428,29.042],[-103.525,29.138],[-103.611,29.166],[-103.647,29.159],[-103.726,29.192],[-103.79,29.258],[-104.038,29.32],[-104.106,29.373],[-104.145,29.383],[-104.214,29.453],[-104.214,29.473],[-104.264,29.514],[-104.339,29.52],[-104.508,29.639],[-104.54,29.676],[-104.565,29.771],[-104.68,29.924],[-104.68,29.975],[-104.705,30.024],[-104.684,30.086],[-104.687,30.18],[-104.713,30.238],[-104.752,30.264],[-104.763,30.302],[-104.809,30.335],[-104.813,30.361],[-104.86,30.39],[-104.853,30.418],[-104.899,30.57],[-104.924,30.605],[-104.967,30.608],[-105.007,30.686],[-105.061,30.686],[-105.111,30.743],[-105.154,30.752],[-105.219,30.802],[-105.262,30.798],[-105.287,30.822],[-105.398,30.856],[-105.398,30.889],[-105.556,30.991],[-105.603,31.082],[-105.743,31.165],[-105.775,31.167],[-105.782,31.198],[-105.868,31.289],[-105.94,31.319],[-105.954,31.365],[-106.005,31.393],[-106.08,31.399],[-106.206,31.466],[-106.382,31.732],[-106.45,31.765],[-106.489,31.748],[-106.547,31.807],[-106.604,31.825],[-106.601,31.844],[-106.636,31.866],[-106.647,31.899],[-106.622,31.914],[-106.618,32.001],[-103.065,32.001],[-103.065,33.042],[-103.044,33.946],[-103.044,36.501]]];
+function txEdgeKm(p){ const R = TX_OUTLINE[0], k = Math.cos(p.lat*Math.PI/180); let m = Infinity;
+  for(let i=0;i<R.length;i++){ const a = R[i], b = R[(i+1)%R.length]; m = Math.min(m, segDist(p.lng*k, p.lat, [a[0]*k,a[1]], [b[0]*k,b[1]])); } return m*111.2; }
+const inTexasOutline = p => TX_OUTLINE.some(r=>inRings(p.lng, p.lat, [r]));
+const inTexas = p => inTexasOutline(p) || txEdgeKm(p) < 3;
 
 /* ===== Geometry (local feet around a center) ===== */
 function proj(c){ const k = Math.cos(c.lat*Math.PI/180);
@@ -173,6 +182,26 @@ function sampleShare(rings, test, n=110){ // share of the polygon area where tes
   for(let i=0;i<n;i++) for(let j=0;j<n;j++){ const x=x0+(i+.5)*dx, y=y0+(j+.5)*dy; if(!inRings(x,y,rings)) continue; tot++; if(test(x,y)) hit++; }
   return tot ? hit/tot : 0;
 }
+// a tract can be one parcel or several (an assemblage); overlapping parcels are counted once
+const partsOf = s => s.parts && s.parts.length ? s.parts : [s.rings];
+function inTract(s, x, y){ return partsOf(s).some(rs=>inRings(x,y,rs)); }
+function tractShare(s, test, n=110){ const [x0,y0,x1,y1]=bbox(s.rings), dx=(x1-x0)/n, dy=(y1-y0)/n; let tot=0, hit=0;
+  for(let i=0;i<n;i++) for(let j=0;j<n;j++){ const x=x0+(i+.5)*dx, y=y0+(j+.5)*dy; if(!inTract(s,x,y)) continue; tot++; if(test(x,y)) hit++; }
+  return tot ? hit/tot : 0; }
+function tractArea(s){ const parts = partsOf(s); if(parts.length < 2) return polyArea(s.rings);
+  const [x0,y0,x1,y1] = bbox(s.rings), n = 320, dx = (x1-x0)/n, dy = (y1-y0)/n; let hit = 0;
+  for(let i=0;i<n;i++) for(let j=0;j<n;j++) if(inTract(s, x0+(i+.5)*dx, y0+(j+.5)*dy)) hit++;
+  return hit*dx*dy; }
+function bboxHit(a, b){ return a[0]<=b[2] && b[0]<=a[2] && a[1]<=b[3] && b[1]<=a[3]; }
+function ringsIntersect(A, B){ // true when two polygons overlap or touch: a vertex inside the other, or edges crossing
+  if(!bboxHit(bbox(A), bbox(B))) return false;
+  for(const r of A) for(const [x,y] of r) if(inRings(x,y,B)) return true;
+  for(const r of B) for(const [x,y] of r) if(inRings(x,y,A)) return true;
+  for(const ra of A) for(let i=0;i<ra.length;i++){ const a=ra[i], b=ra[(i+1)%ra.length];
+    for(const rb of B) for(let j=0;j<rb.length;j++) if(segsCross(a,b,rb[j],rb[(j+1)%rb.length])) return true; }
+  return false; }
+const touchesTract = (s, rings) => partsOf(s).some(pr=>ringsIntersect(pr, rings));
+const lineToTract = (s, path) => Math.min(...partsOf(s).map(pr=>lineToPolyDist(path, pr)));
 const COMPASS = ["north","northeast","east","southeast","south","southwest","west","northwest"];
 const compass = (dx,dy) => COMPASS[Math.round(((Math.atan2(dx,dy)*180/Math.PI)+360)%360/45)%8];
 
@@ -228,10 +257,15 @@ async function fetchFlood(envLL, ptLL){
   const a = pt.features && pt.features[0] && pt.features[0].attributes;
   // FIRM panel and its effective date (layer 3), best effort: the zone read does not depend on it
   let firm = null; try { const fp = await getJSON(CONFIG.fema.replace(/\/\d+$/,"/3") + "/query?" + qs({geometry:ptLL.join(","), geometryType:"esriGeometryPoint", inSR:4326, spatialRel:"esriSpatialRelIntersects", outFields:"FIRM_PAN,EFF_DATE", returnGeometry:false, f:"json"}), {}, 12000);
-    const fa = fp.features && fp.features[0] && fp.features[0].attributes; if(fa) firm = {no:fa.FIRM_PAN||null, eff:fa.EFF_DATE ? new Date(fa.EFF_DATE).toLocaleDateString("en-US",{year:"numeric",month:"short",day:"numeric",timeZone:"UTC"}) : null}; } catch(_){}
+    const fa = fp.features && fp.features[0] && fp.features[0].attributes; if(fa) firm = {no:fa.FIRM_PAN||null, effMs:fa.EFF_DATE||null, eff:fa.EFF_DATE ? new Date(fa.EFF_DATE).toLocaleDateString("en-US",{year:"numeric",month:"short",day:"numeric",timeZone:"UTC"}) : null}; } catch(_){}
   return { pointZone: a ? zoneName(a) : null, panel: a && a.DFIRM_ID, firm,
     polys: feats.map(f => ({zone:zoneName(f.attributes), sfha:f.attributes.SFHA_TF==="T", floodway:/FLOODWAY/i.test(f.attributes.ZONE_SUBTY||""), ringsLL:f.geometry.rings})) };
 }
+function floodFlags(f){ if(!f || f.status!=="ok") return []; const out = [];
+  if((f.zonesOnTract||[]).some(z=>/^V/.test(z))) out.push("Coastal high-hazard area (FEMA V zone) mapped on the tract: wave action, with stricter building rules.");
+  const yrsOld = f.firm && f.firm.effMs ? (Date.now() - f.firm.effMs)/3.156e10 : null;
+  if(yrsOld && yrsOld >= 10) out.push(`This FEMA map took effect in ${new Date(f.firm.effMs).getUTCFullYear()}, about ${Math.floor(yrsOld)} years ago. Development and newer studies since then may not be reflected.`);
+  return out; }
 function zoneName(a){ if(!a) return null; if(/FLOODWAY/i.test(a.ZONE_SUBTY||"")) return "AE floodway"; if(/0\.2/.test(a.ZONE_SUBTY||"")) return "X (0.2% annual chance)"; if(a.FLD_ZONE==="X") return "X (minimal)"; return a.FLD_ZONE; }
 async function fetchWetlands(envLL){
   const j = await getJSON(CONFIG.nwi + "/query?" + qs({geometry:envLL.join(","), geometryType:"esriGeometryEnvelope", inSR:4326, spatialRel:"esriSpatialRelIntersects", outFields:"ATTRIBUTE,WETLAND_TYPE",
@@ -282,6 +316,19 @@ async function fetchLines(c, mi){
     returnGeometry:true, outSR:4326, geometryPrecision:6, maxAllowableOffset:0.00002, f:"json"}), {}, 20000);
   return (j.features||[]).filter(f=>f.geometry&&f.geometry.paths).map(f=>({kv:f.attributes.VOLTAGE>0?f.attributes.VOLTAGE:null, cls:f.attributes.VOLT_CLASS, status:f.attributes.STATUS, pathsLL:f.geometry.paths}));
 }
+async function fetchRoads(envLL, n){ // public road centerlines from OpenStreetMap; private and no-access ways left out
+  const [w,s0,e,nn] = envLL, q = `[out:json][timeout:20];way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|road|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)$"]["access"!~"^(private|no)$"](${s0},${w},${nn},${e});out geom tags;`;
+  const url = CONFIG.roads[(n||0) % CONFIG.roads.length] + "?data=" + encodeURIComponent(q);
+  const j = await getJSON(url, {}, 22000);
+  return (j.elements||[]).filter(x=>x.geometry && x.geometry.length>1).map(x=>({name:x.tags && (x.tags.name || x.tags.ref) || null, kind:x.tags && x.tags.highway, pathLL:x.geometry.map(g=>[g.lon,g.lat])})); }
+const ROAD_TOUCH_FT = 100; // a centerline this close to the tract line usually means the tract fronts the road
+function roadStats(s, roads){ let best = null;
+  for(const r of roads){ const d = lineToTract(s, r.path); if(!best || d < best.d) best = {d, name:r.name, kind:r.kind}; }
+  const touching = roads.filter(r=>lineToTract(s, r.path) <= ROAD_TOUCH_FT);
+  return {roads, touches:touching.length>0, names:[...new Set(touching.map(r=>r.name).filter(Boolean))].slice(0,3), nearest:best}; }
+function roadText(r, short){ if(r.touches) return short ? "Yes" + (r.names.length ? ` (${r.names[0]})` : "") : `A mapped public road runs along or into the tract${r.names.length?` (${r.names.join(", ")})`:""}`;
+  const near = r.nearest ? (r.nearest.d < 1320 ? `about ${fmt(sig2(r.nearest.d),0)} ft` : `about ${fmt(r.nearest.d/5280,1)} mi`) : null;
+  return short ? "No" + (near ? ` (${near})` : "") : `No mapped public road touches the tract${near?`; the nearest is ${near} away${r.nearest.name?` (${r.nearest.name})`:""}`:""}. It may be landlocked or reached by an easement`; }
 async function fetchCity(p){
   const d = 0.01, ext=[p.lng-d,p.lat-d,p.lng+d,p.lat+d].join(",");
   const j = await getJSON(CONFIG.cities + "/identify?" + qs({geometry:p.lng+","+p.lat, geometryType:"esriGeometryPoint", sr:4326, layers:"all", tolerance:0, mapExtent:ext, imageDisplay:"400,400,96", returnGeometry:false, f:"json"}));
@@ -334,8 +381,8 @@ const SAMPLES = [
 
 /* ===== State ===== */
 let current = null, VIEW = "sheet", SKETCH = null, LIST = loadList();
-const LAYERS = [["ghost","Faded aerial","#b9c3ca"],["aerial","Full aerial","#8a9aa5"],["contours","Lidar contours","#9a6b3c"],["flood","FEMA flood","#3a74b0"],["wet","Wetlands (NWI)","#2f8a6a"],["water","Streams","#3a9bd0"],["adj","Neighbors","#7c8790"],["power","Transmission","#c27a10"]];
-const LAYER_ON = {ghost:true, aerial:false, contours:true, flood:true, wet:true, water:true, adj:true, power:true};
+const LAYERS = [["ghost","Faded aerial","#b9c3ca"],["aerial","Full aerial","#8a9aa5"],["contours","Lidar contours","#9a6b3c"],["flood","FEMA flood","#3a74b0"],["wet","Wetlands (NWI)","#2f8a6a"],["water","Streams","#3a9bd0"],["road","Roads (OSM)","#8c99a3"],["adj","Neighbors","#7c8790"],["power","Transmission","#c27a10"]];
+const LAYER_ON = {ghost:true, aerial:false, contours:true, flood:true, wet:true, water:true, road:true, adj:true, power:true};
 
 /* ===== Build a site object ===== */
 function frameFor(rings){ const [x0,y0,x1,y1] = bbox(rings), w = x1-x0, h = y1-y0, s = Math.max(w,h), pad = Math.max(s*0.28, 180);
@@ -343,7 +390,7 @@ function frameFor(rings){ const [x0,y0,x1,y1] = bbox(rings), w = x1-x0, h = y1-y
   let fw = Math.max(w+2*pad, (h+2*pad)*aspect), fh = fw/aspect; return [cx-fw/2, cy-fh/2, cx+fw/2, cy+fh/2]; }
 function newSite(o){
   const s = {id: Date.now().toString(36), layers:{}, neighbors:[], added:[], ...o};
-  s.frame = frameFor(s.rings); s.areaSqft = polyArea(s.rings); s.acres = ac(s.areaSqft);
+  s.frame = frameFor(s.rings); s.areaSqft = tractArea(s); s.acres = ac(s.areaSqft);
   s.refs = parseLegal(s.legal); return s;
 }
 function siteFromSample(sm){
@@ -354,11 +401,12 @@ function siteFromSample(sm){
   const floodPolys = sm.flood.map(f=>({...f}));
   L.flood = {status:"ok", polys:floodPolys, pointZone:"X (minimal)", ...floodStats(s, floodPolys)};
   L.wet = {status:"ok", polys:sm.wet, ...wetStats(s, sm.wet)};
-  L.water = {status:"ok", items:sm.streams.map(p=>({paths:[p], name:null})), crossing:sm.streams.some(p=>lineToPolyDist(p, s.rings)===0)};
+  L.water = {status:"ok", ...waterStats(s, sm.streams.map(p=>({paths:[p], name:null})))};
   L.soils = {status:"ok", units:sm.soils};
   const g = synthGrid(s, sm.terrain); L.terrain = {status:"ok", grid:g, ...terrainStats(s, g)};
   const lines = sm.lines.map(l=>({kv:l.kv, paths:l.pathsFt})); L.power = {status:"ok", ...powerStats(s, lines)};
   L.juris = {status:"ok", city:null, text:sm.city};
+  L.road = {status:"ok", touches:true, names:[], roads:[], nearest:null};
   L.adj = {status:"na", note:"Neighbors are drawn on live sites."};
   L.aerial = {status:"na"};
   return s;
@@ -370,21 +418,30 @@ function synthGrid(s, fn){ const [x0,y0,x1,y1]=s.frame, nx=96, ny=Math.round(96*
 /* ===== Derived figures (all approximate) ===== */
 function floodStats(s, polys){
   const sf = polys.filter(p=>p.sfha), fw = polys.filter(p=>p.floodway);
-  const inSF = sampleShare(s.rings, (x,y)=>sf.some(p=>inRings(x,y,p.rings)));
-  const inFW = fw.length ? sampleShare(s.rings, (x,y)=>fw.some(p=>inRings(x,y,p.rings))) : 0;
-  const zones = [...new Set(polys.filter(p=>p.rings.some(r=>r.some(([x,y])=>inRings(x,y,s.rings))) || s.rings[0].some(([x,y])=>inRings(x,y,p.rings))).map(p=>p.zone))];
+  const inSF = tractShare(s, (x,y)=>sf.some(p=>inRings(x,y,p.rings)));
+  const inFW = fw.length ? tractShare(s, (x,y)=>fw.some(p=>inRings(x,y,p.rings))) : 0;
+  const zones = [...new Set(polys.filter(p=>touchesTract(s, p.rings)).map(p=>p.zone))];
   return {shareSFHA:inSF, shareFloodway:inFW, zonesOnTract:zones};
 }
 function wetStats(s, polys){
-  const share = polys.length ? sampleShare(s.rings, (x,y)=>polys.some(p=>inRings(x,y,p.rings))) : 0;
-  const types = [...new Set(polys.filter(p=>p.rings.some(r=>r.some(([x,y])=>inRings(x,y,s.rings))) || s.rings[0].some(([x,y])=>inRings(x,y,p.rings))).map(p=>p.type))];
+  const share = polys.length ? tractShare(s, (x,y)=>polys.some(p=>inRings(x,y,p.rings))) : 0;
+  const types = [...new Set(polys.filter(p=>touchesTract(s, p.rings)).map(p=>p.type))];
   return {share, typesOnTract:types, nearby:polys.length};
 }
+function waterText(wa){ const nm = wa.names && wa.names.length ? ` (${wa.names.slice(0,2).join(", ")})` : "";
+  if(wa.share > 0.9) return `A mapped lake or river covers nearly all of the tract${nm}`;
+  if(wa.share > 0.02) return `About ${fmt(wa.share*100,0)}% of the tract is under a mapped lake or river${nm}`;
+  return wa.crossing ? `A mapped stream or water body touches the tract${nm}` : "No mapped stream or water body touches the tract"; }
+function waterStats(s, items){ // streams by centerline; lakes and rivers by polygon, so a water body that covers or crosses the tract counts
+  const hit = items.filter(i=>(i.paths||[]).some(p=>lineToTract(s, p)===0) || (i.rings && touchesTract(s, i.rings)));
+  const bodies = items.filter(i=>i.rings && i.rings.length);
+  const share = bodies.length ? tractShare(s, (x,y)=>bodies.some(b=>inRings(x,y,b.rings)), 80) : 0;
+  return {items, crossing:hit.length>0, share, names:[...new Set(hit.map(i=>i.name).filter(Boolean))], nearNames:[...new Set(items.map(i=>i.name).filter(Boolean))]}; }
 function gridAt(g, x, y){ const i = Math.floor((x-g.x0)/g.dx), j = Math.floor((g.ytop-y)/g.dy); if(i<0||j<0||i>=g.nx||j>=g.ny) return NaN; return g.z[j*g.nx+i]; }
 function terrainStats(s, g){
   const pts = [], slopes = [];
   for(let j=1;j<g.ny-1;j++) for(let i=1;i<g.nx-1;i++){
-    const x = g.x0+(i+.5)*g.dx, y = g.ytop-(j+.5)*g.dy; if(!inRings(x,y,s.rings)) continue;
+    const x = g.x0+(i+.5)*g.dx, y = g.ytop-(j+.5)*g.dy; if(!inTract(s,x,y)) continue;
     const z = g.z[j*g.nx+i]; if(isNaN(z)) continue;
     const zx = (g.z[j*g.nx+i+1]-g.z[j*g.nx+i-1])/(2*g.dx), zy = (g.z[(j-1)*g.nx+i]-g.z[(j+1)*g.nx+i])/(2*g.dy);
     pts.push([x,y,z]); if(isFinite(zx)&&isFinite(zy)) slopes.push(Math.hypot(zx,zy)*100);
@@ -408,25 +465,33 @@ function terrainStats(s, g){
   return { ok:true, min:mn, max:mx, relief:mx-mn, meanSlope:mean, p90:slopes.length?slopes[Math.floor(slopes.length*.9)]:null, over5:over(5), over10:over(10),
     planeSlope:Math.hypot(a,b)*100, fallDir:(Math.hypot(a,b)>0.0015 ? compass(-a,-b) : null), lowSide: lo ? compass(lo[0]-cx, lo[1]-cy) : null, balanceCY:cutCY, cellFt:Math.round((g.dx+g.dy)/2) };
 }
+function lineDistText(d, short){ if(d <= 60) return short ? "Crosses or touches the tract" : "A mapped transmission line crosses or touches this tract";
+  if(d < 1320) return short ? `About ${fmt(sig2(d),0)} ft away` : `Nearest mapped transmission line about ${fmt(sig2(d),0)} ft from the tract`;
+  return short ? `About ${fmt(d/5280,1)} mi away` : `Nearest mapped transmission line about ${fmt(d/5280,1)} mi from the tract`; }
 function powerStats(s, lines){
   let best = null;
-  for(const l of lines) for(const p of l.paths){ const d = lineToPolyDist(p, s.rings); if(!best || d < best.d) best = {d, kv:l.kv}; }
-  const within = lines.filter(l=>l.paths.some(p=>lineToPolyDist(p, s.rings) <= (s.powerMi||CONFIG.powerRadiusMi)*5280));
+  for(const l of lines) for(const p of l.paths){ const d = lineToTract(s, p); if(!best || d < best.d) best = {d, kv:l.kv}; }
+  const within = lines.filter(l=>l.paths.some(p=>lineToTract(s, p) <= (s.powerMi||CONFIG.powerRadiusMi)*5280));
   const kvs = [...new Set(within.map(l=>l.kv).filter(Boolean))].sort((a,b)=>b-a);
   return {lines, nearest:best && best.d <= (s.powerMi||CONFIG.powerRadiusMi)*5280 ? best : null, count:within.length, kvs};
 }
 
 /* ===== Run a screen ===== */
-const STEPS = [["parcel","Appraisal parcel"],["flood","FEMA floodplain"],["wet","Wetlands (NWI)"],["water","Mapped streams"],["soils","Soils (SSURGO)"],["terrain","Terrain (USGS lidar)"],["power","Transmission lines"],["juris","Jurisdiction"]];
+const STEPS = [["parcel","Appraisal parcel"],["flood","FEMA floodplain"],["wet","Wetlands (NWI)"],["water","Mapped streams"],["soils","Soils (SSURGO)"],["terrain","Terrain (USGS lidar)"],["power","Transmission lines"],["juris","Jurisdiction"],["road","Road frontage (OSM)"]];
 async function runLive(raw, opts={}){
   const p = await parseLocation(raw);
-  if(!inTexas(p)) throw new Error("That point is outside Texas. This screen covers Texas parcels.");
+  if(!inTexas(p)) throw Object.assign(new Error("That point is outside Texas. This screen covers Texas land only."), {outside:true});
   const center = {lat:p.lat, lng:p.lng}, P = proj(center);
   setStatus("parcel","wait");
   let parcel;
   try { parcel = await fetchParcelAt(center); }
   catch(e){ throw new Error("The statewide parcel service didn't answer, so nothing was drawn. Try again in a minute, use Sketch a tract, or call (469) 317-0250."); }
-  if(!parcel || !parcel.ringsLL.length) throw Object.assign(new Error("No appraisal parcel was found at that point. It may be a road or water, or the county's parcels may not be in the statewide set. You can sketch the tract instead."), {sketchAt:center});
+  if(!parcel || !parcel.ringsLL.length){
+    if(!inTexasOutline(center)) throw Object.assign(new Error("That point is outside Texas, or offshore. This screen covers Texas land only."), {outside:true});
+    let wet = []; try { const d = 0.0004; wet = await fetchWetlands([center.lng-d, center.lat-d, center.lng+d, center.lat+d]); } catch(_){}
+    const deep = wet.find(w=>/Lake|Deepwater|Riverine/i.test(w.type||"") && inRings(center.lng, center.lat, w.ringsLL));
+    if(deep) throw Object.assign(new Error(`That point is open water (${deep.type.toLowerCase()} on the National Wetlands Inventory). This screen covers land. Move the pin onto the shore, or pick a nearby parcel below.`), {water:true, center});
+    return siteFromPin(center, raw, p.kind); }
   const rings = parcel.ringsLL.map(r=>r.map(P.f));
   const c2 = P.i(centroid(rings)); const center2 = {lat:c2[1], lng:c2[0]}, P2 = proj(center2);
   const s = newSite({sample:false, input:raw, kind:p.kind, label:p.label, center:center2, P:P2, rings:parcel.ringsLL.map(r=>r.map(P2.f)), county:parcel.county, legal:parcel.legal, propId:parcel.propId,
@@ -435,10 +500,33 @@ async function runLive(raw, opts={}){
   s.area = (parcel.county ? titleCase(parcel.county) + " County" : "Texas");
   return s;
 }
+/* acreage by source: the outline we drew, the roll figure in the statewide feed, and the county record we did not read */
+function acreage(s){
+  if(s.sample || s.pin) return {rows:[], gap:null};
+  const rows = [[s.sketch ? "Your outline (GIS)" : "Drawn outline (GIS)", s.acres]];
+  const feed = s.sketch ? null : s.parcels && s.parcels.length > 1 ? (s.parcels.every(p=>p.legalAcres) ? s.parcels.reduce((t,p)=>t+p.legalAcres,0) : null) : s.legalAcres;
+  if(feed) rows.push(["Roll acreage in the statewide parcel feed (TxGIO)", feed]);
+  if(s.parent) rows.push(["Parent parcel, drawn (GIS)", s.parent.acres]);
+  let gap = null;
+  if(feed){ const d = Math.abs(s.acres-feed), r = d/Math.max(s.acres, feed);
+    if(feed > s.acres*1.5) gap = `The appraisal account lists about ${acTxt(feed)} acres, more than this ${acTxt(s.acres)}-acre outline. The account may include other tracts. Figures on this screen apply to the outline only.`;
+    else if(s.acres > feed*1.5) gap = `This outline draws about ${acTxt(s.acres)} acres, more than the ${acTxt(feed)} acres on the roll. Confirm which figure fits the tract you mean.`;
+    else if(r > 0.03 && d >= 0.1) gap = `The figures differ by about ${fmt(r*100,0)}% (${acTxt(d)} ac). Confirm acreage from the deed or a survey before scoping work.`; }
+  return {rows, gap}; }
+const acreLine = s => { const a = acreage(s); return a.rows.map(([l,v])=>`${l}: ${acTxt(v)} ac`).join(" · ") + (a.rows.length ? ` · ${s.county ? titleCase(s.county)+" County" : "County"} appraisal district record: not read by this screen` : ""); };
+
+/* a pin that misses every parcel still gets a partial screen: the point layers, read for a small circle around the pin */
+const PIN_R = 300;
+function siteFromPin(center, raw, kind){
+  const P = proj(center), ring = Array.from({length:48}, (_,i)=>[Math.cos(i/48*2*Math.PI)*PIN_R, Math.sin(i/48*2*Math.PI)*PIN_R]);
+  const s = newSite({sample:false, pin:true, input:raw, kind, center, P, rings:[ring], county:null, legal:null, propId:null, situs:null, source:"No parcel matched", parcels:[], oid:null});
+  s.title = "No parcel at this pin"; s.area = "Texas"; return s; }
 function siteFromSketch(ringFt, base){
   const P = base.P, ringLL = ringFt.map(P.i), c2 = P.i(centroid([ringFt])), center = {lat:c2[1], lng:c2[0]}, P2 = proj(center);
   const s = newSite({sample:false, sketch:true, input:"sketch", kind:"Sketched outline", center, P:P2, rings:[ringLL.map(P2.f)], county:base.county, legal:null, propId:null, situs:null, source:"Outline sketched on this page", parcels:[]});
-  s.title = "Sketched tract"; s.area = base.area || "Texas"; s.sketchLL = ringLL; return s;
+  s.title = "Sketched tract"; s.area = base.area || "Texas"; s.sketchLL = ringLL;
+  if(!base.sample && !base.pin && base.parcels && base.parcels.length) s.parent = {propId:base.propId, situs:base.situs, acres:base.acres, title:base.title, legal:base.legal};
+  s.confirm = "part"; return s;
 }
 const yrs = (a,b) => { const y1 = a ? new Date(a).getUTCFullYear() : null, y2 = new Date(b).getUTCFullYear(); return y1 && y1 !== y2 ? y1 + "–" + y2 : String(y2); };
 const titleCase = t => String(t||"").toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());
@@ -448,21 +536,24 @@ async function screenLayers(s, only){
   const [x0,y0,x1,y1] = s.frame, a = s.P.i([x0,y0]), b = s.P.i([x1,y1]), env = [a[0],a[1],b[0],b[1]];
   const c = s.center, toFt = rr => rr.map(r=>r.map(s.P.f));
   const job = async (key, fn) => { if(only && !only.includes(key)) return; setStatus(key,"wait"); L[key] = {status:"wait"}; renderReadout(s);
-    for(let n = 0; ; n++){ try { L[key] = {status:"ok", ...(await fn())}; break; }
+    for(let n = 0; ; n++){ try { const r = await fn(n); L[key] = {...r, status:r._status||"ok"}; break; }
       catch(e){ const msg = String(e.message||e), final = /no elevation cells/.test(msg);
         if(final || n >= 2 || s !== current){ L[key] = {status:"fail", err:msg}; break; }
         await new Promise(r=>setTimeout(r, 800 * 2**n + Math.random()*500)); } }
-    if(s !== current) return; setStatus(key, L[key].status); renderReadout(s); drawSheet(s); renderInsights(s); };
+    if(s !== current) return; setStatus(key, L[key].status==="none" ? "na" : L[key].status); renderReadout(s); drawSheet(s); renderInsights(s); if(key==="adj") renderMatch(s); };
   const tasks = [
-    job("flood", async()=>{ const f = await fetchFlood(env, [c.lng,c.lat]); const polys = f.polys.map(p=>({...p, rings:toFt(p.ringsLL)})); return {polys, pointZone:f.pointZone, panel:f.panel, firm:f.firm, ...floodStats(s, polys)}; }),
+    job("flood", async()=>{ const f = await fetchFlood(env, [c.lng,c.lat]); const polys = f.polys.map(p=>({...p, rings:toFt(p.ringsLL)}));
+      // an empty answer means no FEMA map here, which is not the same as outside the floodplain
+      if(!polys.length && !f.pointZone) return {_status:"none", polys:[], noneText:"FEMA returned no flood map for this area. Unmapped is not the same as outside the floodplain.", firm:f.firm};
+      return {polys, pointZone:f.pointZone, panel:f.panel, firm:f.firm, ...floodStats(s, polys)}; }),
     job("wet", async()=>{ const w = await fetchWetlands(env); const polys = w.map(p=>({...p, rings:toFt(p.ringsLL)})); return {polys, ...wetStats(s, polys)}; }),
     job("water", async()=>{ const w = await fetchWater(env); const items = w.map(i=>({name:i.name, paths:i.paths?toFt(i.paths):null, rings:i.ringsLL?toFt(i.ringsLL):null}));
-      const crossing = items.some(i=>(i.paths||[]).some(p=>lineToPolyDist(p, s.rings)===0) || (i.rings||[]).some(r=>r.some(([x,y])=>inRings(x,y,s.rings))));
-      return {items, crossing, names:[...new Set(items.map(i=>i.name).filter(Boolean))]}; }),
+      return waterStats(s, items); }),
     job("soils", async()=>({units: await fetchSoils(ringsLL)})),
     job("terrain", async()=>{ const g = await fetchTerrain(s); const st = terrainStats(s, g); if(!st.ok) throw new Error("no elevation cells on the tract"); return {grid:g, ...st}; }),
     job("power", async()=>{ s.powerMi = (TYPE==="dc" || s.acres >= 40) ? 5 : CONFIG.powerRadiusMi; const lines = (await fetchLines(c, s.powerMi)).map(l=>({kv:l.kv, status:l.status, paths:toFt(l.pathsLL)})); return powerStats(s, lines); }),
     job("juris", async()=>fetchCity(c)),
+    job("road", async(n)=>{ const r = await fetchRoads(env, n); return roadStats(s, r.map(x=>({...x, path:x.pathLL.map(s.P.f)}))); }),
     job("adj", async()=>{ if(s.sketch) return {items:[]}; const pad = 0.15, w = b[0]-a[0], h = b[1]-a[1];
       const nb = await fetchNeighbors([a[0]+w*pad, a[1]+h*pad, b[0]-w*pad, b[1]-h*pad], s.oid);
       const ids = new Set(s.parcels.map(p=>p.oid));
@@ -472,8 +563,8 @@ async function screenLayers(s, only){
 }
 
 /* ===== Status / readout ===== */
-function stateOf(s, key){ if(key==="parcel") return "ok"; const l = s.layers[key]; return !l ? "wait" : l.status==="ok" ? "ok" : l.status==="wait" ? "wait" : l.status==="na" ? "off" : "na"; }
-const RO_META = {parcel:["pen","TxGIO StratMap","#ff6a5e"],flood:["wave","FEMA NFHL","#5ab0ff"],wet:["drop","USFWS NWI","#5fd3a8"],water:["drop","USGS NHD","#4fb6e8"],soils:["layers","NRCS SSURGO","#c9a36b"],terrain:["contour","USGS 3DEP","#e0a33b"],power:["bolt","HIFLD","#f0b35a"],juris:["sheet","TxGIO","#b9a7ff"]};
+function stateOf(s, key){ if(key==="parcel") return "ok"; const l = s.layers[key]; return !l ? "wait" : l.status==="ok" ? "ok" : l.status==="wait" ? "wait" : l.status==="na" || l.status==="none" ? "off" : "na"; }
+const RO_META = {parcel:["pen","TxGIO StratMap","#ff6a5e"],flood:["wave","FEMA NFHL","#5ab0ff"],wet:["drop","USFWS NWI","#5fd3a8"],water:["drop","USGS NHD","#4fb6e8"],soils:["layers","NRCS SSURGO","#c9a36b"],terrain:["contour","USGS 3DEP","#e0a33b"],power:["bolt","HIFLD","#f0b35a"],juris:["sheet","TxGIO","#b9a7ff"],road:["road","OpenStreetMap","#9fb3c2"]};
 let RO_S = null; const RO_PREV = {};
 function roMeter(k){ const s = RO_S; if(!s) return null; const L = s.layers, ok = x => L[x] && L[x].status==="ok";
   if(k==="flood" && ok("flood")) return {v:L.flood.shareSFHA, lab:`${fmt(L.flood.shareSFHA*100,0)}% in mapped 1%`};
@@ -496,6 +587,7 @@ function roThumb(k, st){
   if(ok && k==="flood") for(const p of L.flood.polys.filter(p=>p.sfha)) o.push(`<path d="${P(p.rings)}" fill="url(#${id}h)" fill-rule="evenodd" stroke="${c}" stroke-width=".8"/>`);
   if(ok && k==="wet") for(const p of L.wet.polys) o.push(`<path d="${P(p.rings)}" fill="url(#${id}h)" fill-rule="evenodd" stroke="${c}" stroke-width=".8"/>`);
   if(ok && k==="water") for(const i of L.water.items){ if(i.paths) o.push(`<path d="${P(i.paths,false)}" fill="none" stroke="${c}" stroke-width="1.6"/>`); if(i.rings) o.push(`<path d="${P(i.rings)}" fill="${c}" fill-opacity=".3"/>`); }
+  if(ok && k==="road") for(const r of L.road.roads) o.push(`<path d="${P([r.path],false)}" fill="none" stroke="${c}" stroke-width="1.6"/>`);
   if(ok && k==="power") for(const l of L.power.lines) o.push(`<path d="${P(l.paths,false)}" fill="none" stroke="${c}" stroke-width="1.4" stroke-dasharray="5 2 1 2"/>`);
   if(ok && k==="terrain" && L.terrain.grid){ const g = L.terrain.grid, fr = frameRelief(g), iv = [1,2,5,10,20,50,100].find(v => fr/v <= 9) || 100;
     const d = contourSegs(g, iv).map(q=>`M${X(q[0]).toFixed(1)} ${Y(q[1]).toFixed(1)}L${X(q[2]).toFixed(1)} ${Y(q[3]).toFixed(1)}`).join(""); o.push(`<path d="${d}" stroke="${c}" stroke-width=".7" fill="none" opacity=".9"/>`); }
@@ -511,7 +603,7 @@ function roThumb(k, st){
 function readoutRow(k, label, value, sub, st){
   const [ico, src, c] = RO_META[k] || ["sheet","",""], m = roMeter(k), sig = value + "|" + st, fresh = RO_PREV[k] !== undefined && RO_PREV[k] !== sig && st==="ok"; RO_PREV[k] = sig;
   return `<li class="ro ${st}${fresh?" fresh":""}" style="--c:${c}"><span class="ro-ico" aria-hidden="true">${roThumb(k, st) || `<svg viewBox="0 0 24 24">${WF_ICO[ico]}</svg>`}<span class="st ${st}"></span></span><div class="ro-body"><div class="ro-k">${esc(label)}<span class="ro-src">${esc(src)}</span></div><div class="ro-v">${value}</div>${m?`<div class="ro-m" title="${esc(m.lab)}"><i style="width:${Math.max(2,Math.round(m.v*100))}%"></i></div>`:""}${sub?`<div class="ro-s">${sub}</div>`:""}</div></li>`; }
-function failText(l){ return l && l.status==="fail" ? "The public service didn't answer, so this layer is left off. Nothing was assumed." : "Loading…"; }
+function failText(l){ return !l || l.status==="wait" ? "Still loading…" : l.status==="none" ? (l.noneText || "Nothing mapped here.") : l.status==="fail" ? "Not available. The public service didn't answer, so this layer is left off. Nothing was assumed." : ""; }
 async function retryMissing(){ const s = current; if(!s) return; const keys = STEPS.map(x=>x[0]).filter(k=>k!=="parcel" && s.layers[k] && s.layers[k].status==="fail");
   if(s.layers.adj && s.layers.adj.status==="fail") keys.push("adj"); if(!keys.length) return; toast("Asking the public services again…");
   await screenLayers(s, keys); if(s===current){ renderBrief(s); renderReadout(s); renderInsights(s); } }
@@ -519,27 +611,29 @@ function renderRetry(s){ const b = $("#retryBox"); if(!b) return; const miss = S
   b.hidden = !miss.length || s.sample; if(miss.length) $("#retryTxt").textContent = `${miss.length===1?"One public service":miss.length+" public services"} didn't answer: ${miss.map(x=>x[1]).join(", ")}.`; }
 function renderReadout(s){
   RO_S = s; renderRetry(s); const L = s.layers, rows = [];
-  const parcelSub = s.sample ? "Illustrative sample, not a real parcel" : s.sketch ? "Your sketched outline" : `Appraisal record ${s.propId?("#"+esc(s.propId)):""} &middot; ${esc(titleCase(s.source||""))}${s.taxYear?(" "+esc(s.taxYear)):""}`;
-  rows.push(readoutRow("parcel", s.added.length ? "Assemblage" : "Parcel", `${acTxt(s.acres)} acres <span class="opt">(GIS, approx.)</span>`, parcelSub + (s.legalAcres && !s.added.length ? ` &middot; ${fmt(s.legalAcres,2)} ac on the appraisal roll` : ""), "ok"));
+  const parcelSub = s.sample ? "Illustrative sample, not a real parcel" : s.pin ? `Layers are read for ${PIN_R} ft around your pin. Pick a parcel or sketch the tract for a full screen.` : s.sketch ? (s.parent ? `Your outline, part of appraisal parcel ${esc(s.parent.propId||"")}` : "Your sketched outline") : `Appraisal record ${s.propId?("#"+esc(s.propId)):""} &middot; ${esc(titleCase(s.source||""))}${s.taxYear?(" "+esc(s.taxYear)):""}`;
+  rows.push(readoutRow("parcel", s.pin ? "No parcel matched" : s.added.length ? "Assemblage" : "Parcel", s.pin ? "Partial screen around the pin" : `${acTxt(s.acres)} acres <span class="opt">(drawn, approx.)</span>`, parcelSub + (acreage(s).rows.length > 1 ? " &middot; " + esc(acreage(s).rows.slice(1).map(([l,v])=>`${l.replace(/ \(.*\)$/,"")}: ${acTxt(v)} ac`).join(" · ")) : "") + (acreage(s).gap ? `<span class="ro-gap">${esc(acreage(s).gap)}</span>` : ""), s.pin ? "off" : "ok"));
   const f = L.flood; rows.push(readoutRow("flood","FEMA floodplain", f && f.status==="ok" ? (f.shareSFHA>0.005 ? `About ${fmt(f.shareSFHA*100,0)}% in the mapped 1% annual-chance floodplain` : "Outside the mapped 1% annual-chance floodplain") : esc(failText(f)),
-    f && f.status==="ok" ? (f.shareSFHA>0.005 ? `Approximately ${fmt((1-f.shareSFHA)*100,0)}% of the tract is outside mapped floodplain${f.shareFloodway>0.005?`; about ${fmt(f.shareFloodway*100,0)}% in mapped floodway`:""}. ` : "") + "From an aligned FEMA map overlay, not an elevation survey." + (f.firm && f.firm.eff && !s.sample ? ` FEMA map effective ${f.firm.eff}.` : "") : "", stateOf(s,"flood")));
+    f && f.status==="ok" ? (f.shareSFHA>0.005 ? `Approximately ${fmt((1-f.shareSFHA)*100,0)}% of the tract is outside mapped floodplain${f.shareFloodway>0.005?`; about ${fmt(f.shareFloodway*100,0)}% in mapped floodway`:""}. ` : "") + "From an aligned FEMA map overlay, not an elevation survey." + (f.firm && f.firm.eff && !s.sample ? ` FEMA map effective ${f.firm.eff}.` : "") + floodFlags(f).map(x=>`<span class="ro-gap">${esc(x)}</span>`).join("") : "", stateOf(s,"flood")));
   const w = L.wet; rows.push(readoutRow("wet","Wetlands (NWI)", w && w.status==="ok" ? (w.share>0.002 ? `About ${fmt(w.share*100,1)}% mapped as wetland or water` : w.nearby ? "None mapped on the tract; some nearby" : "None mapped on or near the tract") : esc(failText(w)),
     w && w.status==="ok" && w.typesOnTract.length ? esc(w.typesOnTract.join(", ")) + ". A mapped indicator, not a delineation." : w && w.status==="ok" ? "A mapped indicator, not a delineation." : "", stateOf(s,"wet")));
-  const wa = L.water; rows.push(readoutRow("water","Mapped streams", wa && wa.status==="ok" ? (wa.crossing ? "A mapped stream or water body touches the tract" : "None mapped across the tract") : esc(failText(wa)), wa && wa.status==="ok" && wa.names && wa.names.length ? esc(wa.names.slice(0,2).join(", ")) : "", stateOf(s,"water")));
-  const so = L.soils; rows.push(readoutRow("soils","Soils (SSURGO)", so && so.status==="ok" ? (so.units.length ? esc(so.units[0].name.split(",")[0]) + ` <span class="opt">~${fmt(so.units[0].share*100,0)}%</span>` : "No soil map units returned") : esc(failText(so)),
+  const wa = L.water; rows.push(readoutRow("water","Streams and water bodies", wa && wa.status==="ok" ? esc(waterText({...wa, names:[]})) : esc(failText(wa)), wa && wa.status==="ok" && wa.names && wa.names.length ? esc(wa.names.slice(0,2).join(", ")) : "", stateOf(s,"water")));
+  const so = L.soils; rows.push(readoutRow("soils","Soils (SSURGO)", so && so.status==="ok" ? (so.units.length ? esc(mainSoil(so.units)) : "No soil map units returned") : esc(failText(so)),
     so && so.status==="ok" && so.units.length ? `${so.units.length} map unit${so.units.length>1?"s":""}. Hydrologic group ${esc(so.units[0].hyd||"n/a")}. A screening hint, not a geotechnical report.` : "", stateOf(s,"soils")));
   const t = L.terrain; rows.push(readoutRow("terrain","Terrain (public lidar)", t && t.status==="ok" ? `${fmt(t.relief,0)} ft of relief, average slope ~${fmt(t.meanSlope,1)}%` : esc(failText(t)),
     t && t.status==="ok" ? `${t.fallDir ? "Ground generally falls toward the " + t.fallDir + ". " : "Nearly level overall. "}Approximate, from USGS 3DEP. Not a design topo.` : "", stateOf(s,"terrain")));
-  const pw = L.power; rows.push(readoutRow("power","Transmission lines", pw && pw.status==="ok" ? (pw.nearest ? (pw.nearest.d===0 ? "A mapped line crosses the tract" : `Nearest mapped line ~${fmt(pw.nearest.d/5280,1)} mi away`) : `None mapped within ${s.powerMi||CONFIG.powerRadiusMi} miles`) : esc(failText(pw)),
+  const pw = L.power; rows.push(readoutRow("power","Transmission lines", pw && pw.status==="ok" ? (pw.nearest ? lineDistText(pw.nearest.d) : `None mapped within ${s.powerMi||CONFIG.powerRadiusMi} miles`) : esc(failText(pw)),
     pw && pw.status==="ok" && pw.nearest ? `${pw.nearest.kv ? fmt(pw.nearest.kv,0)+" kV class. " : ""}Proximity only. Says nothing about available capacity.` : pw && pw.status==="ok" ? "Proximity only." : "", stateOf(s,"power")));
   const j = L.juris; rows.push(readoutRow("juris","Jurisdiction", j && j.status==="ok" ? (j.text ? esc(j.text) : j.name ? "City of " + esc(j.name) : "Outside mapped city limits") : esc(failText(j)),
     j && j.status==="ok" ? (j.name ? "Zoning is set by the city. This is a mapped limit, not a zoning finding." : "Could still sit in a city's ETJ, which controls platting. Check with the county and nearby cities.") : "", stateOf(s,"juris")));
+  const rd = L.road; rows.push(readoutRow("road","Road frontage", rd && rd.status==="ok" ? esc(roadText(rd)) : esc(failText(rd)),
+    rd && rd.status==="ok" ? "From OpenStreetMap road lines. A mapped road is not legal access; frontage, right-of-way and easements are confirmed by title and survey." : "", stateOf(s,"road")));
   $("#readout").innerHTML = rows.join("");
   const adjBox = $("#adjBox"), A = L.adj;
-  adjBox.hidden = s.sample || s.sketch;
+  adjBox.hidden = s.sample || s.sketch || s.pin;
   if(!adjBox.hidden){
     $("#adjText").innerHTML = s.added.length ? `This screen covers ${s.parcels.length} appraisal parcels, about ${acTxt(s.acres)} acres combined. Click a highlighted parcel to drop it, or a neighbor to add it.`
-      : A && A.status==="ok" ? `Click a neighboring parcel on the sheet to add it. Layers recompute for the combined outline. ${A.items.length} neighbors loaded.`
+      : A && A.status==="ok" ? `Click a neighboring parcel on the sheet to add it. Layers recompute for the combined outline.`
       : A && A.status==="fail" ? "Neighboring parcels didn't load, so assemblage is off for this site." : "Loading neighboring parcels…";
   }
 }
@@ -577,7 +671,7 @@ function sheetTitleLines(s){
   const cty = s.county ? titleCase(s.county) + " County, Texas" : "Texas";
   const rec = [r.lot && "Lot " + r.lot, r.block && "Block " + r.block, r.addition && titleCase(r.addition) + (r.platted && !/ADD/.test(r.addition) ? " Addition" : "")].filter(Boolean).join(", ");
   const abs = r.abstract ? "Abstract No. " + r.abstract : "";
-  return ["PRELIMINARY SITE SCREEN", String(s.title||"Site").toUpperCase(), (s.title==="Sketch a tract here" ? "OUTLINE NOT YET PLACED" : `BEING ${acTxt(s.acres)} ACRES ±`), rec || abs || (s.sample ? "ILLUSTRATIVE SAMPLE TRACT" : s.sketch ? "SKETCHED OUTLINE" : "APPRAISAL PARCEL"), city + cty].map(t=>t.length>58?t.slice(0,56)+"…":t);
+  return ["PRELIMINARY SITE SCREEN", String(s.title||"Site").toUpperCase(), (s.pin ? `NO PARCEL MATCHED · ${PIN_R}-FT RADIUS AT PIN` : `BEING ${acTxt(s.acres)} ACRES ±`), rec || abs || (s.sample ? "ILLUSTRATIVE SAMPLE TRACT" : s.pin ? "PARTIAL SCREEN, NOT A PARCEL" : s.sketch ? "SKETCHED OUTLINE" : "APPRAISAL PARCEL"), city + cty].map(t=>t.length>58?t.slice(0,56)+"…":t);
 }
 function drawSheet(s){
   if(!s) return; const svg = $("#sheet"), T = sheetXform(s), L = s.layers, o = [];
@@ -620,6 +714,8 @@ function drawSheet(s){
     o.push(`</g>`); }
   const w = L.wet;
   if(LAYER_ON.wet && w && w.status==="ok"){ o.push(`<g${fx("wet")}>`); for(const p of w.polys) o.push(`<path d="${pathOf(p.rings,T)}" fill="url(#hWet)" fill-rule="evenodd" stroke="#2c7a5d" stroke-width=".9"/>`); o.push(`</g>`); }
+  const rd = L.road;
+  if(LAYER_ON.road && rd && rd.status==="ok" && rd.roads.length){ o.push(`<g${fx("road")}>`); for(const r of rd.roads) o.push(`<path d="${pathOf([r.path],T,false)}" fill="none" stroke="${aerialOn?"#f4d58d":"#8c99a3"}" stroke-width="1.1" stroke-dasharray="10 3" pointer-events="none"/>`); o.push(`</g>`); }
   const wa = L.water;
   if(LAYER_ON.water && wa && wa.status==="ok"){ o.push(`<g${fx("water")}>`); for(const i of wa.items){
     if(i.paths) o.push(`<path d="${pathOf(i.paths,T,false)}" fill="none" stroke="#2a86c0" stroke-width="1.6"/>`);
@@ -636,17 +732,19 @@ function drawSheet(s){
   const pw = L.power;
   if(LAYER_ON.power && pw && pw.status==="ok"){ o.push(`<g${fx("power")}>`); for(const l of pw.lines) o.push(`<path d="${pathOf(l.paths,T,false)}" fill="none" stroke="#b2600b" stroke-width="1.6" stroke-dasharray="16 4 3 4"/>`); o.push(`</g>`); }
   // tract: pale tint and a heavy boundary-weight line, as on the plotted sheets
-  const probe = s.title==="Sketch a tract here";
+  const probe = !!s.pin;
+  if(probe){ o.push(`<path d="${pathOf(s.rings,T)}" fill="rgba(208,49,45,.05)" stroke="#921A1D" stroke-width="1.4" stroke-dasharray="5 4" pointer-events="none"/>`); const px = T.X(0), py = T.Y(0); o.push(`<path d="M${px-9} ${py}H${px+9}M${px} ${py-9}V${py+9}" stroke="#921A1D" stroke-width="1.6"/><circle cx="${px}" cy="${py}" r="3.2" fill="none" stroke="#921A1D" stroke-width="1.2"/>`); }
   if(!probe) o.push(`<path d="${pathOf(s.rings,T)}" fill="${aerialOn?"rgba(146,26,29,.16)":"rgba(208,49,45,.12)"}" fill-rule="evenodd" stroke="${aerialOn?"#fff":"#111"}" stroke-width="2.6" stroke-linejoin="round" class="tract"/>`);
   if(aerialOn && !probe) o.push(`<path d="${pathOf(s.rings,T)}" fill="none" stroke="#921A1D" stroke-width="1.2" pointer-events="none"/>`);
   if(s.added.length) for(const p of s.parcels) o.push(`<path class="adjp sel" data-oid="${esc(p.oid)}" d="${pathOf(p.ringsLL.map(r=>r.map(s.P.f)),T)}" fill="rgba(146,26,29,.001)" stroke="#921A1D" stroke-width=".9" stroke-dasharray="3 3"/>`);
-  if(!probe){ const [cx,cy] = interiorPoint(s.rings), lc = aerialOn ? "#fff" : ink, ls = aerialOn ? "#111" : halo;
-  const lbl = [`${acTxt(s.acres)} ACRES ±`, `(${fmt(sig2(s.areaSqft),0)} SQ. FT. ±)`, s.sample ? "SAMPLE TRACT" : s.sketch ? "SKETCHED OUTLINE" : s.added.length ? "APPRAISAL PARCELS (COMBINED)" : "APPRAISAL PARCEL"];
+  { const [cx,cy] = interiorPoint(s.rings), lc = aerialOn ? "#fff" : ink, ls = aerialOn ? "#111" : halo;
+  const lbl = s.pin ? ["AREA READ AROUND YOUR PIN", `${PIN_R}-FT RADIUS · NOT A PARCEL`] : [`${acTxt(s.acres)} ACRES ±`, `(${fmt(sig2(s.areaSqft),0)} SQ. FT. ±)`, s.sample ? "SAMPLE TRACT" : s.sketch ? "SKETCHED OUTLINE" : s.added.length ? "APPRAISAL PARCELS (COMBINED)" : "APPRAISAL PARCEL"];
   const r = s.refs || {}; if(r.lot || r.block) lbl.push([r.lot&&"LOT "+r.lot, r.block&&"BLOCK "+r.block].filter(Boolean).join(", ")); if(s.propId && !s.added.length) lbl.push("APPRAISAL ID " + s.propId);
   o.push(`<text x="${T.X(cx).toFixed(1)}" y="${(T.Y(cy)-lbl.length*5).toFixed(1)}" font-family="${SF}" text-anchor="middle" fill="${lc}" paint-order="stroke" stroke="${ls}" stroke-width="3" pointer-events="none">${lbl.map((l,i)=>`<tspan x="${T.X(cx).toFixed(1)}" dy="${i?12:0}" font-size="${i===0?12.5:8.6}" font-weight="${i===0?600:400}">${esc(l)}</tspan>`).join("")}</text>`); }
   if(SKETCH && SKETCH.pts.length){ o.push(`<path d="${pathOf([SKETCH.pts],T,SKETCH.pts.length>2)}" fill="rgba(146,26,29,.12)" stroke="#921A1D" stroke-width="2" stroke-dasharray="6 3"/>`);
     for(const p of SKETCH.pts) o.push(`<circle cx="${T.X(p[0])}" cy="${T.Y(p[1])}" r="4" fill="#921A1D"/>`); }
   o.push(`<g transform="translate(${DX+DW/2} ${DY+DH/2}) rotate(-30)" font-family="${SF}" font-weight="600" text-anchor="middle" fill="${aerialOn?"#fff":"#921A1D"}" opacity="${aerialOn?.22:.09}" pointer-events="none"><text font-size="64" y="-12" letter-spacing="10">PRELIMINARY</text><text font-size="38" y="40" letter-spacing="12">NOT A SURVEY</text></g>`);
+  o.push(`<g pointer-events="none"><rect x="${DX+8}" y="${DY+8}" width="318" height="17" rx="2" fill="#fff" stroke="#921A1D" stroke-width=".8"/><text x="${DX+16}" y="${DY+20}" font-family="${SF}" font-size="8.6" font-weight="600" fill="#921A1D" letter-spacing=".6">PRELIMINARY PUBLIC-RECORD SCREEN · NOT A SURVEY · ${esc(today().toUpperCase())}</text></g>`);
   o.push(`</g>`);
   o.push(notesColumn(s, T));
   o.push(titleStrip(s));
@@ -684,33 +782,38 @@ function notesColumn(s, T){
   const widen = () => { if(y > DY + 222 && colW < NW){ colW = NW; } };
   head("RECORD INFORMATION (APPRAISAL ROLL)");
   if(s.sample) para("Illustrative sample tract. Shapes, figures and record data are examples only.");
-  else if(s.sketch) para("Outline sketched on the Site Screen page. No appraisal record is attached to it.");
+  else if(s.pin) para(`No appraisal parcel was found at the pin (${s.center.lat.toFixed(6)}, ${s.center.lng.toFixed(6)}). Layers were read for a ${PIN_R}-ft radius around it. This is not a tract.`);
+  else if(s.sketch) para(s.parent ? `Outline sketched on the Site Screen page, part of appraisal parcel ${s.parent.propId||""} (${acTxt(s.parent.acres)} ac drawn). No record is attached to the outline itself.` : "Outline sketched on the Site Screen page. No appraisal record is attached to it.");
   else { para(s.legal ? String(s.legal) : "No legal description on the appraisal roll for this parcel.");
     y += 2; para([s.propId && "Appraisal ID " + s.propId, s.county && titleCase(s.county) + " County", s.taxYear && "Tax year " + s.taxYear].filter(Boolean).join(" · ")); }
+  if(!s.sample && !s.pin){ const a = acreage(s); y += 2; para("ACREAGE BY SOURCE: " + a.rows.map(([l,v])=>`${l} ${acTxt(v)} ac`).join("; ") + "; county appraisal record not read."); if(a.gap){ y += 1; para("NOTE: " + a.gap); } }
   y += 6; widen();
   head("GENERAL NOTES"); widen();
   const lid = t && t.grid && t.grid.lidar;
   const gn = [
     "This sheet assembles public data. No field work was performed and nothing shown was located on the ground.",
     "Tract lines come from county appraisal mapping (TxGIO StratMap), drawn for tax purposes. They can be off by tens of feet and are not a boundary.",
-    t && t.status==="ok" ? `Contours are generated from USGS 3DEP public lidar${lid&&lid.project&&!s.sample?` (${lid.project}${lid.end?", "+yrs(lid.start,lid.end):""})`:""} at a ${s._contourIv||"–"}-ft interval and are approximate. Not a design topographic survey.` : "Public lidar contours were not available for this sheet.",
+    t && t.status==="ok" ? `Contours are generated from USGS 3DEP public lidar${lid&&lid.project&&!s.sample?` (${lid.project}${lid.end?", "+yrs(lid.start,lid.end):""})`:""} at a ${s._contourIv||"–"}-ft interval and are approximate. Not a design topographic survey.` : t && t.status==="wait" ? "Public lidar was still loading when this sheet was drawn." : "Public lidar was not available for this sheet.",
     "Positions are geographic (WGS 84) from public map services. No survey datum, coordinate system or survey basis is established.",
     "Transmission lines (HIFLD) show proximity only. They say nothing about capacity, service, cost or timing."];
   gn.forEach((g,i)=>{ num(i+1, g); widen(); });
   y += 4; widen();
   head("FLOOD STATEMENT");
   if(f && f.status==="ok"){ const pin = f.shareSFHA, zones = f.zonesOnTract.length ? f.zonesOnTract.join(", ") : "X (minimal)";
-    para(`According to the FEMA National Flood Hazard Layer${f.panel&&!s.sample?` (study ${f.panel}${f.firm&&f.firm.no?`, FIRM panel ${f.firm.no}`:""}${f.firm&&f.firm.eff?`, effective ${f.firm.eff}`:""})`:""}, queried ${today()}, ${pin>0.005?`approximately ${fmt(pin*100,0)}% of this tract lies within the mapped 1% annual-chance floodplain and approximately ${fmt((1-pin)*100,0)}% lies outside mapped floodplain`:`this tract lies outside the mapped 1% annual-chance floodplain`}. Zones touching the tract: ${zones}.${f.shareFloodway>0.005?` About ${fmt(f.shareFloodway*100,0)}% is in mapped floodway.`:""} Percentages are an approximation from an aligned FEMA map overlay, not an on-the-ground elevation survey. This statement does not imply that the property will or will not be free from flooding.`); }
-  else para(f && f.status==="fail" ? "The FEMA service did not answer, so no flood statement is made." : "Loading FEMA flood data…");
+    para(`According to the FEMA National Flood Hazard Layer${f.panel&&!s.sample?` (study ${f.panel}${f.firm&&f.firm.no?`, FIRM panel ${f.firm.no}`:""}${f.firm&&f.firm.eff?`, effective ${f.firm.eff}`:""})`:""}, queried ${today()}, ${pin>0.005?`approximately ${fmt(pin*100,0)}% of this tract lies within the mapped 1% annual-chance floodplain and approximately ${fmt((1-pin)*100,0)}% lies outside mapped floodplain`:`this tract lies outside the mapped 1% annual-chance floodplain`}. Zones touching the tract: ${zones}.${f.shareFloodway>0.005?` About ${fmt(f.shareFloodway*100,0)}% is in mapped floodway.`:""} Percentages are an approximation from an aligned FEMA map overlay, not an on-the-ground elevation survey. This statement does not imply that the property will or will not be free from flooding.`); for(const x of floodFlags(f)) para(x); }
+  else para(f && f.status==="none" ? "FEMA returned no flood map for this area. Unmapped is not the same as outside the floodplain; no flood statement is made." : f && f.status==="fail" ? "The FEMA service did not answer, so no flood statement is made." : "FEMA flood data was still loading when this sheet was drawn; no flood statement is made.");
   y += 6; widen();
   head("SITE DATA (APPROXIMATE, PUBLIC SOURCES)");
   const sd = [];
   if(t && t.status==="ok") sd.push(`Ground about ${fmt(t.min,0)} to ${fmt(t.max,0)} ft (${fmt(t.relief,0)} ft relief), average slope about ${fmt(t.meanSlope,1)}%${t.fallDir?`, falling generally ${t.fallDir}`:""}.`);
   if(w && w.status==="ok") sd.push(w.share>0.002 ? `About ${fmt(w.share*100,1)}% mapped as NWI wetland or water. Not a delineation.` : "No NWI wetland mapped on the tract.");
-  if(wa && wa.status==="ok") sd.push(wa.crossing ? `Mapped stream or water body touches the tract${wa.names&&wa.names.length?` (${wa.names[0]})`:""}.` : "No mapped stream crosses the tract.");
+  if(wa && wa.status==="ok") sd.push(waterText(wa) + ".");
   if(so && so.status==="ok" && so.units.length) sd.push(`Main soil: ${so.units[0].name.split(",")[0]} (~${fmt(so.units[0].share*100,0)}%, hydrologic group ${so.units[0].hyd||"n/a"}).`);
-  if(pw && pw.status==="ok") sd.push(pw.nearest ? (pw.nearest.d===0 ? "A mapped transmission line crosses the tract." : `Nearest mapped transmission line about ${fmt(pw.nearest.d/5280,1)} mi.`) : `No transmission line mapped within ${s.powerMi||CONFIG.powerRadiusMi} mi.`);
+  if(pw && pw.status==="ok") sd.push(pw.nearest ? lineDistText(pw.nearest.d) + "." : `No transmission line mapped within ${s.powerMi||CONFIG.powerRadiusMi} mi.`);
+  const rd = L.road; if(rd && rd.status==="ok") sd.push(roadText(rd) + ". Access not verified.");
   if(j && j.status==="ok") sd.push(j.text ? j.text : j.name ? `Inside mapped city limits of ${titleCase(j.name)}. Not a zoning finding.` : "Outside mapped city limits; an ETJ may still apply.");
+  if(!s.sample){ const miss = STEPS.filter(([k])=>k!=="parcel" && L[k] && L[k].status==="fail").map(x=>x[1]), wait = STEPS.filter(([k])=>k!=="parcel" && (!L[k] || L[k].status==="wait")).map(x=>x[1]);
+    if(miss.length) sd.push(`Not available when drawn: ${miss.join(", ")}. Nothing was assumed for these.`); if(wait.length) sd.push(`Still loading when drawn: ${wait.join(", ")}.`); }
   sd.forEach(x=>{ o.push(`<text x="${colX}" y="${y}" font-family="${SF}" font-size="${FS}" fill="#1a1a1a">•</text>`); para(x, 8); y += 1; widen(); });
   // legend and abbreviations share the last band, two columns
   y += 6; const ly0 = y; colW = 138;
@@ -768,7 +871,7 @@ function drawModel(){
       const xs = [g.x0+(i+.5)*g.dx, g.x0+(i+step+.5)*g.dx], ys = [g.ytop-(j+.5)*g.dy, g.ytop-(j+step+.5)*g.dy], mx = (xs[0]+xs[1])/2, my = (ys[0]+ys[1])/2;
       const dzx = (z[1]-z[0]+z[2]-z[3])/(2*step*g.dx), dzy = (z[0]-z[3]+z[1]-z[2])/(2*step*g.dy);
       const shade = Math.max(0.5, Math.min(1.1, 0.86 - (dzx*0.7 - dzy*0.55)*ex*2.2));
-      meta.push({z, xs, ys, shade, inT:inRings(mx,my,s.rings), inF:fl.some(p=>inRings(mx,my,p.rings)), zr:((z[0]+z[2])/2 - t.min)/(t.relief||1)}); }
+      meta.push({z, xs, ys, shade, inT:inTract(s,mx,my), inF:fl.some(p=>inRings(mx,my,p.rings)), zr:((z[0]+z[2])/2 - t.min)/(t.relief||1)}); }
     s._mq = {key, meta}; }
   for(const m of s._mq.meta){ const {z,xs,ys} = m;
     const P = [pr(xs[0],ys[0],z[0]), pr(xs[1],ys[0],z[1]), pr(xs[1],ys[1],z[2]), pr(xs[0],ys[1],z[3])];
@@ -795,7 +898,7 @@ const SURVEYS = {
   boundary:{name:"Boundary survey", key:"boundary"},
   topo:{name:"Topographic survey", key:"topo"},
   staking:{name:"Construction staking and control", key:"construction"},
-  none:{name:"No survey yet", key:"unsure"}
+  none:{name:"Compare first, survey when the site moves forward", key:"unsure"}
 };
 function recommend(s){
   const big = s.acres >= 40, type = TYPE || (s.sample ? s.type : null), commercial = ["ind","dc","mf","retail"].includes(type), notes = [];
@@ -820,31 +923,33 @@ function powerContextHTML(s){
   const show = TYPE==="dc" || TYPE==="ind" || (s.sample && (s.type==="dc"||s.type==="ind")) || s.acres >= 40; if(!show) return "";
   const near = pw.nearest;
   return `<div class="b-card power"><h3>Power context, from public maps</h3>
-    <p>${near ? (near.d===0 ? "A mapped transmission line crosses this tract" : `The nearest mapped transmission line is about ${fmt(near.d/5280,1)} miles away`) + (near.kv?` (${fmt(near.kv,0)} kV class)`:"") + "." : `No transmission line is mapped within ${s.powerMi||CONFIG.powerRadiusMi} miles.`} ${pw.count>1?`${pw.count} mapped lines fall within ${s.powerMi||CONFIG.powerRadiusMi} miles${pw.kvs.length?`, ${pw.kvs.map(k=>fmt(k,0)+" kV").join(", ")} classes`:""}.`:""}</p>
+    <p>${near ? lineDistText(near.d) + (near.kv?` (${fmt(near.kv,0)} kV class)`:"") + "." : `No transmission line is mapped within ${s.powerMi||CONFIG.powerRadiusMi} miles.`} ${pw.count>1?`${pw.count} mapped lines fall within ${s.powerMi||CONFIG.powerRadiusMi} miles${pw.kvs.length?`, ${pw.kvs.map(k=>fmt(k,0)+" kV").join(", ")} classes`:""}.`:""}</p>
     <p>A nearby line is not capacity. Whether the grid can take a new load, when, and at what cost is answered by the transmission provider and ERCOT through the large-load interconnection process, not by a map. For large loads, PUCT rules require a study fee and financial security before a request is studied.</p>
     <p><a href="${CONFIG.ercotPlanning}" target="_blank" rel="noopener">ERCOT regional planning filings</a> &middot; <a href="${CONFIG.puctLargeLoad}" target="_blank" rel="noopener">PUCT large-load rule (16 TAC §25.194)</a></p>
     ${pw.nearest && pw.nearest.d < 300 ? "<p>A line this close usually means a recorded transmission easement on or next to the tract. Its width and restrictions come from the recorded instrument, located by survey.</p>" : ""}</div>`;
 }
+const KEYOF = {Parcel:"parcel", Floodplain:"flood", Wetlands:"wet", Streams:"water", Soils:"soils", Terrain:"terrain", Transmission:"power", Jurisdiction:"juris", "Road access":"road"};
 function renderBrief(s){ if(s===current) setTimeout(updRec, 0);
   const L = s.layers, rec = recommend(s), rows = [];
-  const row = (k, finding, limit, src, st) => rows.push(`<tr><td class="k">${k}</td><td>${st==="ok"?finding:`<span class="na">Not loaded.</span> The public service didn't answer, so this layer is left off.`}<div class="limit">${limit}</div></td><td class="src">${src}</td></tr>`);
+  const row = (k, finding, limit, src, st) => rows.push(`<tr><td class="k">${k}</td><td>${st==="ok"?finding:`<span class="na">${st==="wait"?"Loading.":st==="none"?"Nothing mapped.":"Not available."}</span> ${esc(failText(L[KEYOF[k]]))}`}<div class="limit">${limit}</div></td><td class="src">${src}</td></tr>`);
   const st = k => L[k] ? L[k].status : "wait";
-  row("Parcel", `${acTxt(s.acres)} acres by GIS${s.legalAcres&&!s.added.length?`; ${fmt(s.legalAcres,2)} acres on the appraisal roll`:""}. ${s.legal?esc(s.legal):""}`, "An appraisal map, drawn for taxes. Lines can be off by tens of feet. Not a boundary.", s.sample?"Illustrative sample":esc(`TxGIO StratMap Land Parcels, from ${titleCase(s.source||"county appraisal district")}${s.taxYear?", tax year "+s.taxYear:""}`), "ok");
-  const f = L.flood; row("Floodplain", f&&f.status==="ok"?`${f.shareSFHA>0.005?`About ${fmt(f.shareSFHA*100,0)}% inside the mapped 1% annual-chance floodplain; approximately ${fmt((1-f.shareSFHA)*100,0)}% outside mapped floodplain.`:"Outside the mapped 1% annual-chance floodplain."}${f.shareFloodway>0.005?` About ${fmt(f.shareFloodway*100,0)}% in mapped floodway.`:""} Zones touching the tract: ${f.zonesOnTract.length?esc(f.zonesOnTract.join(", ")):"X (minimal)"}.`:"",
+  row("Parcel", s.pin ? `No appraisal parcel at the pin (${s.center.lat.toFixed(6)}, ${s.center.lng.toFixed(6)}). The layers below were read for ${PIN_R} ft around it; they describe that circle, not a tract.` : `${s.sample?acTxt(s.acres)+" acres (illustrative)":esc(acreLine(s))}.${acreage(s).gap?` <b>${esc(acreage(s).gap)}</b>`:""} ${s.legal?esc(s.legal):""}${s.parent?` Outline is part of appraisal parcel ${esc(s.parent.propId||"")}.`:""}`, "An appraisal map, drawn for taxes. Lines can be off by tens of feet. Not a boundary. Acreage by source; the county appraisal district's own record was not read.", s.sample?"Illustrative sample":esc(s.pin?"TxGIO StratMap Land Parcels (no match)":`TxGIO StratMap Land Parcels, from ${titleCase(s.source||"county appraisal district")}${s.taxYear?", tax year "+s.taxYear:""}`), "ok");
+  const f = L.flood; row("Floodplain", f&&f.status==="ok"?`${f.shareSFHA>0.005?`About ${fmt(f.shareSFHA*100,0)}% inside the mapped 1% annual-chance floodplain; approximately ${fmt((1-f.shareSFHA)*100,0)}% outside mapped floodplain.`:"Outside the mapped 1% annual-chance floodplain."}${f.shareFloodway>0.005?` About ${fmt(f.shareFloodway*100,0)}% in mapped floodway.`:""} Zones touching the tract: ${f.zonesOnTract.length?esc(f.zonesOnTract.join(", ")):"X (minimal)"}.${floodFlags(f).map(x=>` <b>${esc(x)}</b>`).join("")}`:"",
     "Percentages are an approximation from an aligned FEMA map overlay, not an on-the-ground elevation survey.", s.sample?"Illustrative sample":`FEMA National Flood Hazard Layer, queried ${today()}${f&&f.panel?` (study ${esc(f.panel)})`:""}`, st("flood"));
   const w = L.wet; row("Wetlands", w&&w.status==="ok"?(w.share>0.002?`About ${fmt(w.share*100,1)}% of the tract is mapped as ${esc(w.typesOnTract.join(", ").toLowerCase()||"wetland or water")}.`:w.nearby?"None mapped on the tract. Mapped features nearby are drawn on the sheet.":"None mapped on or near the tract."):"",
     "The National Wetlands Inventory is drawn from aerial imagery. It is not a jurisdictional delineation.", s.sample?"Illustrative sample":"USFWS National Wetlands Inventory", st("wet"));
-  const wa = L.water; row("Streams", wa&&wa.status==="ok"?(wa.crossing?`A mapped stream or water body touches the tract${wa.names&&wa.names.length?` (${esc(wa.names.slice(0,3).join(", "))})`:""}.`:"No mapped stream crosses the tract."):"", "Mapped centerlines at regional scale. Drainage easements and channels are located by survey.", s.sample?"Illustrative sample":"TxGIO / USGS National Hydrography Dataset", st("water"));
+  const wa = L.water; row("Streams", wa&&wa.status==="ok"?esc(waterText(wa))+".":"", "Mapped centerlines at regional scale. Drainage easements and channels are located by survey.", s.sample?"Illustrative sample":"TxGIO / USGS National Hydrography Dataset", st("water"));
   const so = L.soils; row("Soils", so&&so.status==="ok"&&so.units.length?so.units.slice(0,4).map(u=>`${esc(u.name)} <span class="opt">(~${fmt(u.share*100,0)}%, hydrologic group ${esc(u.hyd||"n/a")}${u.drain?", "+esc(u.drain.toLowerCase()):""})</span>`).join("<br>"):so&&so.status==="ok"?"No soil map units returned.":"",
     "County-scale soil mapping. A screening hint for drainage and foundations, not a geotechnical report.", s.sample?"Illustrative sample":"USDA NRCS SSURGO via Soil Data Access", st("soils"));
   const t = L.terrain; const lid = t&&t.grid&&t.grid.lidar;
   row("Terrain", t&&t.status==="ok"?`Ground runs from about ${fmt(t.min,0)} to ${fmt(t.max,0)} ft (${fmt(t.relief,0)} ft of relief). Average slope about ${fmt(t.meanSlope,1)}%; about ${fmt((t.over5||0)*100,0)}% of the tract is steeper than 5%. ${t.fallDir?`Ground generally falls toward the ${t.fallDir}`:"Nearly level overall"}${t.lowSide?`, with the lowest ground on the ${t.lowSide} side`:""}. Rough earthwork to bring the tract to one plane following its natural fall: about ${fmt(sig2(t.balanceCY),0)} cubic yards each of cut and fill.`:"",
     "Approximate, from public lidar resampled to about " + (t&&t.cellFt?t.cellFt:"–") + "-ft cells. Not a design topo, and not bid quantities: no pavement section, shrink-swell, stripping or building pads.",
     s.sample?"Illustrative sample":`USGS 3DEP${lid&&lid.project?`; lidar project ${esc(lid.project)}`:""}${lid&&lid.end?`, collected ${esc(yrs(lid.start, lid.end))}`:""}${lid&&lid.gsd?`, ${esc(lid.gsd)} m DEM`:""}`, st("terrain"));
-  const pw = L.power; row("Transmission", pw&&pw.status==="ok"?(pw.nearest?(pw.nearest.d===0?"A mapped transmission line crosses the tract.":`Nearest mapped line about ${fmt(pw.nearest.d/5280,1)} miles away`)+(pw.nearest.kv?`, ${fmt(pw.nearest.kv,0)} kV class.`:"."):`None mapped within ${s.powerMi||CONFIG.powerRadiusMi} miles.`):"",
+  const pw = L.power; row("Transmission", pw&&pw.status==="ok"?(pw.nearest?lineDistText(pw.nearest.d)+(pw.nearest.kv?`, ${fmt(pw.nearest.kv,0)} kV class.`:"."):`None mapped within ${s.powerMi||CONFIG.powerRadiusMi} miles.`):"",
     "Proximity from a national public map. It says nothing about available capacity, service, cost or timing.", s.sample?"Illustrative sample":"HIFLD Electric Power Transmission Lines (public dataset, last edited 2023)", st("power"));
   const j = L.juris; row("Jurisdiction", j&&j.status==="ok"?(j.text?esc(j.text):j.name?`Inside mapped city limits of ${esc(j.name)}. Zoning, platting and permits run through the city. <a href="https://www.google.com/search?q=${encodeURIComponent("City of "+j.name+" Texas zoning map")}" target="_blank" rel="noopener">Find the city's zoning map</a>.`:"Outside mapped city limits. A city's extraterritorial jurisdiction may still control platting; county rules apply to roads and drainage."):"",
     "A mapped city limit, not a zoning determination or a city verification letter.", s.sample?"Illustrative sample":`TxGIO / Comptroller city boundaries${j&&j.edited?`, edited ${esc(String(j.edited).split(" ")[0])}`:""}`, st("juris"));
+  const rd = L.road; row("Road access", rd&&rd.status==="ok"?esc(roadText(rd))+".":"", "OpenStreetMap road centerlines within about 100 ft of the tract line. A mapped road is not legal access: frontage, right-of-way and access easements are confirmed by title and survey. Access is not verified by this screen.", s.sample?"Illustrative sample":"OpenStreetMap contributors (ODbL), queried " + today(), st("road"));
   const refs = s.refs || {}, refList = [refs.addition&&`Addition: ${refs.addition}`, refs.lot&&`Lot ${refs.lot}`, refs.block&&`Block ${refs.block}`, refs.abstract&&`Abstract ${refs.abstract}`, refs.instrument&&`Instrument ${refs.instrument}`, refs.volPage, refs.plat&&`Plat ${refs.plat}`].filter(Boolean);
   const still = ["Where the boundary lines and corners actually are, and whether the deeds close and agree with the neighbors'",
     "Which recorded easements, setbacks and restrictions touch the tract, located on the ground",
@@ -867,7 +972,10 @@ function renderBrief(s){ if(s===current) setTimeout(updRec, 0);
       <div class="b-card navy"><h3>If you keep this site</h3><p>The boundary or ALTA, the design topography, and later the construction control and progress flights can come from one licensed Texas crew. ASC flies the site while the crew ties the boundary, on the same visit.</p><p><a href="#packet">Ask for a proposal with the packet</a> or call <a href="tel:+14693170250">(469) 317-0250</a>.</p></div>
     </div>`;
   // proposal context
-  $("#pfSite").textContent = `${s.sample?"Sample site":"Site"}: ${s.title}, ${s.area} · ${acTxt(s.acres)} ac (approx.)`;
+  $("#pfSite").textContent = s.pin ? `Pin at ${s.center.lat.toFixed(5)}, ${s.center.lng.toFixed(5)}: no parcel matched. Pick a parcel or sketch the tract above for a full screen, or describe it in the note.`
+    : `${s.sample?"Sample site":"Site"}: ${s.title}, ${s.area}${s.propId&&!s.sketch?` · Appraisal ID ${s.propId}`:""} · ${s.sample?acTxt(s.acres)+" ac (illustrative)":acreLine(s)}`;
+  const gp = $("#pfGap"); if(gp){ const g = acreage(s).gap; gp.hidden = !g; gp.textContent = g ? "Acreage check: " + g : ""; }
+  $("#tractSet").hidden = !!s.sample;
   $("#altLink").href = CONFIG.quoteUrl + "?" + qs({type:rec.pri===SURVEYS.none ? (rec.add?rec.add.key:"unsure") : rec.pri.key, loc:s.sample ? "" : (s.situs || `${s.center.lat.toFixed(6)}, ${s.center.lng.toFixed(6)}`)}) + "#quote";
 }
 
@@ -876,17 +984,47 @@ function renderSite(s){
   $("#results").hidden = false;
   $("#resKind").textContent = s.sample ? "Sample screen" : "Site screen";
   $("#resTitle").textContent = s.title;
-  $("#resSub").innerHTML = `${s.sample?'<span class="tag sample">Illustrative sample</span>':s.sketch?'<span class="tag sketch">Sketched outline · live public data</span>':'<span class="tag live">Live public data</span>'}${esc(s.area)}${s.sample?"":" · "+s.center.lat.toFixed(5)+", "+s.center.lng.toFixed(5)}`;
+  $("#resSub").innerHTML = `${s.sample?'<span class="tag sample">Illustrative sample</span>':s.pin?'<span class="tag sketch">No parcel matched · partial screen</span>':s.sketch?'<span class="tag sketch">Sketched outline · live public data</span>':'<span class="tag live">Live public data</span>'}${esc(s.area)}${s.sample?"":" · "+s.center.lat.toFixed(5)+", "+s.center.lng.toFixed(5)}`;
   $("#layers").innerHTML = LAYERS.map(([k,l,c])=>`<button type="button" class="lyr" data-k="${k}" aria-pressed="${LAYER_ON[k]}" ${s.sample&&(k==="aerial"||k==="ghost"||k==="adj")?"disabled":""}><i style="background:${c}"></i>${l}</button>`).join("");
   $("#btnList").textContent = LIST.some(x=>x.key===listKey(s)) ? "On your short list" : "Add to short list";
-  renderReadout(s); drawSheet(s); renderBrief(s); renderInsights(s); updPacketForm(); setView(VIEW); renderWorkflow();
+  renderReadout(s); drawSheet(s); renderBrief(s); renderInsights(s); renderMatch(s); updPacketForm(); setView(VIEW); renderWorkflow();
 }
+
+/* ===== "Is this the tract you mean?" ===== */
+const CONFIRM_TXT = {whole:"Yes, the whole parcel", more:"More than this parcel", part:"Only part of it", unsure:"Not sure yet"};
+const normAddr = t => String(t||"").toUpperCase().replace(/,.*$/,"").replace(/\b(STREET|ST|ROAD|RD|DRIVE|DR|AVENUE|AVE|BOULEVARD|BLVD|PARKWAY|PKWY|LANE|LN|HIGHWAY|HWY)\b/g,"").replace(/[^A-Z0-9]/g,"");
+function renderMatch(s){
+  const box = $("#matchBox"); if(!box) return; if(!s || s.sample){ box.hidden = true; return; } box.hidden = false;
+  const entered = s.sketch ? (s.parent ? `An outline drawn inside ${s.parent.title}` : "An outline drawn on the sheet") : s.input;
+  let matched, note = "";
+  if(s.pin) matched = `<b>No appraisal parcel at this point.</b> The layers below are read for ${PIN_R} ft around the pin, which is not a tract.`;
+  else if(s.sketch) matched = `<b>Your outline, about ${acTxt(s.acres)} acres.</b>${s.parent ? ` Part of appraisal parcel ${esc(s.parent.propId||"")}${s.parent.situs?` (${esc(s.parent.situs)})`:""}, ${acTxt(s.parent.acres)} acres drawn.` : ""}`;
+  else if(s.parcels.length > 1) matched = `<b>${s.parcels.length} appraisal parcels combined, about ${acTxt(s.acres)} acres.</b> IDs ${esc(s.parcels.map(p=>p.propId).filter(Boolean).join(", "))}${s.county?` · ${esc(titleCase(s.county))} County`:""}`;
+  else { matched = `<b>${esc(s.situs || "No address on the appraisal roll")}</b> · Appraisal ID ${esc(s.propId||"–")}${s.county?` · ${esc(titleCase(s.county))} County`:""}${s.legal?`<br><span class="opt">${esc(String(s.legal).slice(0,140))}</span>`:""}`;
+    if(s.kind === "Address" && s.situs && normAddr(s.situs) !== normAddr(s.input)) note = "The appraisal roll lists this parcel under a different address than the one you entered. Parcels often carry more than one address. Make sure it is the tract you mean."; }
+  const a = acreage(s), acr = a.rows.length ? `<div class="m-acres">${a.rows.map(([l,v])=>`<span><i>${esc(l)}</i><b>${acTxt(v)} ac</b></span>`).join("")}<span><i>${esc(s.county?titleCase(s.county)+" County":"County")} appraisal record</i><b class="opt">not read here</b></span></div>${a.gap?`<p class="m-gap">${esc(a.gap)}</p>`:""}` : "";
+  const picks = (s.pin || s._showPicks) && s.layers.adj && s.layers.adj.status==="ok" ? pickItems(s.layers.adj.items, s.P) : "";
+  const q = s.pin ? `<div class="m-q"><span>Pick the parcel you mean, or outline the tract.</span><div class="m-btns"><button type="button" class="btn btn-line btn-sm" data-m="sketch">Sketch the tract</button></div></div>`
+    : `<div class="m-q"><span>Is this the tract you mean?</span><div class="m-btns">${["whole","more","part","not"].map(k=>`<button type="button" class="btn btn-sm ${s.confirm===k?"btn-red":"btn-line"}" data-m="${k}" aria-pressed="${s.confirm===k}">${k==="not"?"Not this one":CONFIRM_TXT[k]}</button>`).join("")}</div></div>`;
+  box.innerHTML = `<div class="m-row"><div class="m-cell"><p class="m-k">You entered</p><p>${esc(entered)}</p></div><div class="m-cell"><p class="m-k">We matched</p><p>${matched}</p></div></div>${note?`<p class="m-note">${esc(note)}</p>`:""}${acr}${s.sketch?"":q}${s.pin && s.layers.adj && s.layers.adj.status==="wait" ? '<p class="opt">Finding the closest parcels…</p>' : ""}${picks?`<div class="picks"><p class="m-k">Closest appraisal parcels</p>${picks}</div>`:""}`;
+  syncTractField(s); }
+function syncTractField(s){ const f = $("#reqForm"); if(!f || !f.elements.tract) return; const v = s && (s.sketch ? "part" : s.parcels && s.parcels.length > 1 && !s.confirm ? "more" : s.confirm);
+  for(const r of f.querySelectorAll('input[name="tract"]')) r.checked = !!v && r.value === v; }
+function onMatch(k){ const s = current; if(!s) return;
+  if(k==="sketch"){ $("#btnSketch").click(); $("#sheetWrap").scrollIntoView({behavior:"smooth", block:"center"}); return; }
+  if(k==="not"){ s._showPicks = true; s.confirm = null; renderMatch(s); if(s.layers.adj && s.layers.adj.status!=="ok") toast("Neighboring parcels are still loading"); return; }
+  s.confirm = k; s._showPicks = false; renderMatch(s);
+  if(k==="more"){ toast("Click the neighboring parcels on the sheet to add them"); $("#sheetWrap").scrollIntoView({behavior:"smooth", block:"center"}); }
+  if(k==="part"){ toast("Click the corners of the part you mean, then Screen this outline"); startSketch(); $("#sheetWrap").scrollIntoView({behavior:"smooth", block:"center"}); } }
 
 /* ===== Main flow ===== */
 let RUN = 0;
+function waitWorklist(ms=9000){ return new Promise(res=>{ const t0 = performance.now(); (function chk(){ if(WF_SHOWN >= WF.length || performance.now()-t0 > ms) return res(); setTimeout(chk, 150); })(); }); }
 async function screen(raw, {quiet=false}={}){
-  const my = ++RUN, t0 = performance.now(); note(null);
+  const my = ++RUN, t0 = performance.now(); note(null); $("#noticePicks").hidden = true;
   const go = $("#go"), gl = go.querySelector("span"); go.disabled = true; gl.textContent = "Screening…";
+  // the box and the address bar always name the site being screened, even if this screen fails
+  if(!/^sample:/.test(raw.trim())){ $("#loc").value = raw; safeReplace(null, "", location.pathname + "?" + qs({loc:raw, ...(TYPE?{type:TYPE}:{}), stage:STAGE})); }
   resetMonitor(); relock();
   try {
     const sm = /^sample:(\w+)$/.exec(raw.trim());
@@ -894,60 +1032,45 @@ async function screen(raw, {quiet=false}={}){
     if(sm){ const d = SAMPLES.find(x=>x.id===sm[1]); if(!d) throw new Error("Unknown sample."); s = siteFromSample(d); if(!TYPE) setType(d.type, true); STEPS.forEach(([k])=>setStatus(k,"ok")); }
     else { guide("Finding the appraisal parcel at that point…", "busy"); setStatus("parcel","wait"); s = await runLive(raw); }
     if(my !== RUN) return null;
-    current = s; hudCoord(s.center); if(!s.sample) setStatus("parcel","ok"); renderSite(s);
+    current = s; hudCoord(s.center); if(!s.sample) setStatus("parcel", s.pin ? "na" : "ok"); renderSite(s);
     if(!quiet) setTimeout(()=>$("#results").scrollIntoView({behavior:"smooth", block:"start"}), 80);
     if(!s.sample){
-      guide(`Parcel found: ${acTxt(s.acres)} acres${s.county?` in ${titleCase(s.county)} County`:""}. Reading seven more public layers…`, "busy");
+      guide(s.pin ? "No appraisal parcel at that point. Reading the public layers around the pin and the closest parcels…" : `Parcel found: ${acTxt(s.acres)} acres${s.county?` in ${titleCase(s.county)} County`:""}. Reading the public layers…`, "busy");
       safeReplace(null, "", shareURL(s)); $("#sheetWrap").classList.add("scanning");
       await screenLayers(s); $("#sheetWrap").classList.remove("scanning");
-      if(s === current){ renderBrief(s); renderReadout(s); renderInsights(s);
+      if(s === current){ renderBrief(s); renderReadout(s); renderInsights(s); renderMatch(s);
+        await waitWorklist(); if(s !== current) return s;
         const failed = STEPS.filter(([k])=>s.layers[k] && s.layers[k].status==="fail").length;
-        guide(`Screen complete in ${((performance.now()-t0)/1000).toFixed(0)} s.${failed?` ${failed} public service${failed>1?"s":""} didn't answer, so ${failed>1?"those layers are":"that layer is"} left off.`:""} The sheet and the read are below.`, "ok"); } }
+        const tail = failed ? ` ${failed} public service${failed>1?"s":""} didn't answer, so ${failed>1?"those layers are":"that layer is"} left off.` : "";
+        guide(s.pin ? `Partial screen done in ${((performance.now()-t0)/1000).toFixed(0)} s: no parcel matched, so the layers were read around the pin.${tail} Pick a nearby parcel or sketch the tract below.`
+          : `Screen complete in ${((performance.now()-t0)/1000).toFixed(0)} s.${tail} Check the match below, then the sheet and the read.`, "ok"); } }
     else { safeReplace(null, "", location.pathname + "?" + qs({loc:raw, ...(TYPE?{type:TYPE}:{}) , stage:STAGE})); guide("Sample opened. It is illustrative, so try a real site next.", "ok"); }
     return s;
   } catch(e){
     if(my !== RUN) return null;
     // fail closed: no stale exhibit from another site stays on screen
     current = null; $("#results").hidden = true; $("#sheetWrap").classList.remove("scanning"); resetMonitor();
-    note(e.message || "Something went wrong."); guide("Nothing was drawn for that location. Try another format, or sketch the tract.");
-    if(e.sketchAt) offerSketch(e.sketchAt);
+    note(e.message || "Something went wrong."); guide(e.outside ? "Nothing was screened: the point is outside Texas." : "Nothing was drawn for that location. Try another format, or paste coordinates.");
+    if(e.water && e.center) noticePicks(e.center, my);
     return null;
   } finally { if(my === RUN){ go.disabled = false; gl.textContent = "Screen this site"; } }
 }
+/* the closest real parcels to a point, deduplicated, as one-click picks */
+function pickItems(items, P, n=4){ const seen = new Set();
+  return items.map(it=>{ const rings = it.rings || it.ringsLL.map(r=>r.map(P.f)), [cx,cy] = interiorPoint(rings); return {it, cx, cy, d:Math.max(0, Math.hypot(cx,cy)), ac:polyArea(rings)/SQFT_AC}; })
+    .filter(x=>x.ac>=0.05 && x.d<=2640).sort((a,b)=>a.d-b.d).filter(x=>{ const k = [x.it.situs||x.it.legal||x.it.propId||"", x.ac.toFixed(2)].join("|"); if(seen.has(k)) return false; seen.add(k); return true; }).slice(0,n)
+    .map(({it,cx,cy,d,ac})=>{ const [lng,lat] = P.i([cx,cy]); const what = it.situs || (it.legal ? titleCase(String(it.legal)).slice(0,48) : "Appraisal parcel");
+      return `<button type="button" class="pick" data-ll="${lat.toFixed(6)}, ${lng.toFixed(6)}"><b>${esc(acTxt(ac))} ac</b> <span>${esc(what)}${it.propId?` · ID ${esc(it.propId)}`:""}</span> <i>${d<30?"at the pin":fmt(sig2(d),0)+" ft away"}</i></button>`; }).join(""); }
+async function noticePicks(center, my){ const P = proj(center), d = 900, a = P.i([-d,-d]), b = P.i([d,d]);
+  let nb; try { nb = await fetchNeighbors([a[0],a[1],b[0],b[1]], null); } catch(_){ return; } if(my !== RUN) return;
+  const html = pickItems(nb, P); if(!html) return; const box = $("#noticePicks"); box.innerHTML = `<p>Closest parcels to that point:</p>${html}`; box.hidden = false; }
 function prefillContact(){ try { const c = JSON.parse(sessionStorage.getItem("asc_contact")||"null"); if(!c) return; const f = $("#reqForm"); for(const [k,v] of Object.entries(c)) if(f.elements[k] && !f.elements[k].value) f.elements[k].value = v; } catch(_){} }
 function relock(){ if(document.body.classList.contains("staff")) return; document.body.classList.remove("unlocked"); $("#briefWrap").classList.add("locked"); $("#reqForm").hidden = false; $("#reqDone").hidden = true; prefillContact(); }
 function note(msg){ const n = $("#notice"); if(msg){ n.textContent = msg; n.hidden = false; } else n.hidden = true; }
-function offerSketch(center){
-  const P = proj(center), half = 900, ring = [[-half,-half],[half,-half],[half,half],[-half,half]];
-  const base = newSite({sample:false, sketch:true, input:"sketch", kind:"Sketch", center, P, rings:[ring.map(p=>[p[0]/50,p[1]/50])], county:null, legal:null, area:"Texas", parcels:[]});
-  base.frame = [-half,-half*DH/DW,half,half*DH/DW]; base.title = "Sketch a tract here"; base.layers = {aerial:{status:"na"}};
-  current = base; $("#results").hidden = false; renderSite(base); $("#brief").innerHTML = ""; $("#adjBox").hidden = true;
-  $("#insights").innerHTML = ""; $("#wfState").textContent = "Waiting on your outline";
-  $("#readout").innerHTML = '<li><span class="st na" aria-hidden="true"></span><div><div class="ro-k">No parcel at that point</div><div class="ro-v">Sketch the tract on the aerial</div><div class="ro-s">Click the corners on the sheet, then choose Screen this outline. Every layer runs on your outline.</div></div></li>';
-  startSketch();
-  $("#results").scrollIntoView({behavior:"smooth"});
-  nearbyPicks(base);
-}
-// a missed click is usually a road or a sliver: offer the closest real parcels as one-click picks first
-async function nearbyPicks(base){
-  const [x0,y0,x1,y1] = base.frame, a = base.P.i([x0,y0]), b = base.P.i([x1,y1]);
-  let nb; try { nb = await fetchNeighbors([a[0],a[1],b[0],b[1]], null); } catch(_){ return; }
-  if(current !== base || !nb.length) return;
-  const items = nb.slice(0,220).map(n=>({...n, rings:n.ringsLL.map(r=>r.map(base.P.f))}));
-  base.layers.adj = {status:"ok", items}; LAYER_ON.adj = true; drawSheet(base);
-  const picks = items.map(n=>{ const [cx,cy] = interiorPoint(n.rings); return {n, cx, cy, d:Math.hypot(cx,cy), ac:Math.abs(n.rings.reduce((t,r)=>t+ringArea(r),0))/43560}; })
-    .filter(x=>x.ac>=0.05).sort((p,q)=>p.d-q.d).slice(0,4);
-  if(!picks.length) return;
-  const li = picks.map(({n,cx,cy,d,ac})=>{ const [lng,lat] = base.P.i([cx,cy]);
-    const what = n.situs || (n.legal ? titleCase(String(n.legal)).slice(0,48) : "Appraisal parcel");
-    return `<button type="button" class="pick" data-ll="${lat.toFixed(6)}, ${lng.toFixed(6)}"><b>${esc(acTxt(ac))} ac</b> <span>${esc(what)}</span> <i>${fmt(sig2(d),0)} ft away</i></button>`; }).join("");
-  $("#readout").insertAdjacentHTML("afterbegin", `<li class="picks-li"><span class="st ok" aria-hidden="true"></span><div><div class="ro-k">Did you mean one of these?</div><div class="ro-s">The closest appraisal parcels to that point. Pick one to screen it, or sketch your own outline below.</div><div class="picks">${li}</div></div></li>`);
-}
-
 /* ===== Sketch mode ===== */
 function startSketch(){ if(!current) return; SKETCH = {pts:[], base:current}; LAYER_ON.aerial = true; $("#sheetWrap").classList.add("sketching"); $("#sketchBar").hidden = false; setView("sheet"); updSketch(); }
 function endSketch(){ SKETCH = null; $("#sheetWrap").classList.remove("sketching"); $("#sketchBar").hidden = true; if(current) drawSheet(current); }
-function updSketch(){ $("#sketchCount").textContent = SKETCH ? SKETCH.pts.length : 0; $("#sketchDone").disabled = !SKETCH || SKETCH.pts.length < 3; drawSheet(current); }
+function updSketch(){ const n = SKETCH ? SKETCH.pts.length : 0; $("#sketchCount").textContent = n + (n >= 3 ? ` · about ${acTxt(Math.abs(ringArea(SKETCH.pts))/SQFT_AC)} ac` : ""); $("#sketchDone").disabled = !SKETCH || SKETCH.pts.length < 3; drawSheet(current); }
 function svgPoint(e){ const svg = $("#sheet"), pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY; const p = pt.matrixTransform(svg.getScreenCTM().inverse()); return [p.x, p.y]; }
 async function finishSketch(){
   const base = SKETCH.base, pts = SKETCH.pts.slice(); endSketch();
@@ -960,6 +1083,7 @@ async function finishSketch(){
 /* ===== Assemblage ===== */
 async function toggleNeighbor(oid){
   const s = current; if(!s || s.sample || s.sketch) return;
+  if(s.pin){ const n = (s.layers.adj && s.layers.adj.items || []).find(n=>String(n.oid)===String(oid)); if(n){ const [lng,lat] = s.P.i(interiorPoint(n.rings)); const ll = `${lat.toFixed(6)}, ${lng.toFixed(6)}`; $("#loc").value = ll; screen(ll); } return; }
   const inSet = s.parcels.find(p=>String(p.oid)===String(oid));
   if(inSet){ if(s.parcels.length===1) return; s.parcels = s.parcels.filter(p=>p!==inSet); s.added = s.added.filter(o=>String(o)!==String(oid)); }
   else { const n = (s.layers.adj && s.layers.adj.items || []).find(n=>String(n.oid)===String(oid)); if(!n) return; s.parcels.push(n); s.added.push(n.oid); s.layers.adj.items = s.layers.adj.items.filter(x=>x!==n); }
@@ -975,12 +1099,15 @@ async function restoreAssemblage(s, adds){
   await rebuildAssemblage(s);
 }
 async function rebuildAssemblage(s){
-  s._th = {}; s.rings = s.parcels.flatMap(p=>p.ringsLL.map(r=>r.map(s.P.f))); s.areaSqft = polyArea(s.rings); s.acres = ac(s.areaSqft);
+  s._th = {}; s.parts = s.parcels.map(p=>p.ringsLL.map(r=>r.map(s.P.f))); s.rings = s.parts.flat(); s.areaSqft = tractArea(s); s.acres = ac(s.areaSqft);
   s.title = s.parcels.length>1 ? `Assemblage of ${s.parcels.length} parcels` : (s.parcels[0].situs || "Parcel " + (s.parcels[0].propId||""));
   if(s.parcels.length===1){ s.legal = s.parcels[0].legal; s.propId = s.parcels[0].propId; s.added = []; } else { s.legal = null; s.propId = s.parcels.map(p=>p.propId).join(", "); }
   s.refs = s.parcels.length===1 ? parseLegal(s.legal) : {};
   const nb = bbox(s.rings), fr = s.frame; if(nb[0]<fr[0]||nb[1]<fr[1]||nb[2]>fr[2]||nb[3]>fr[3]) s.frame = frameFor(s.rings);
-  renderSite(s); safeReplace(null, "", shareURL(s)); await screenLayers(s, ["flood","wet","water","soils","terrain","power"]); if(s===current){ renderBrief(s); renderReadout(s); }
+  // figures from the old outline must not linger while the new one is read
+  const redo = ["flood","wet","water","soils","terrain","power","road"]; for(const k of redo){ s.layers[k] = {status:"wait"}; LST[k] = "wait"; }
+  s.confirm = s.parcels.length > 1 ? "more" : null; s._showPicks = false;
+  renderSite(s); safeReplace(null, "", shareURL(s)); await screenLayers(s, redo); if(s===current){ renderBrief(s); renderReadout(s); renderInsights(s); renderMatch(s); }
 }
 
 /* ===== Share link ===== */
@@ -995,23 +1122,37 @@ function shareURL(s){ const base = location.origin + location.pathname;
 /* ===== Short list (this browser only) ===== */
 function loadList(){ try { return JSON.parse(localStorage.getItem("ascScreenList")||"[]"); } catch(e){ return []; } }
 function saveList(){ try { localStorage.setItem("ascScreenList", JSON.stringify(LIST)); } catch(e){} renderList(); updPacketForm(); }
-const listKey = s => s.sample ? "sample:"+s.sampleId : s.sketch ? "sketch:"+(s.sketchLL||[]).map(p=>p[1].toFixed(6)+","+p[0].toFixed(6)).join(";") : "p:"+s.parcels.map(p=>p.oid).sort().join("+");
-function summary(s){ const L = s.layers, ok = k => L[k] && L[k].status==="ok";
-  return { key:listKey(s), title:s.title, area:s.area, sample:!!s.sample, acres:+s.acres.toFixed(2),
+const listKey = s => s.sample ? "sample:"+s.sampleId : s.pin ? `pin:${s.center.lat.toFixed(6)},${s.center.lng.toFixed(6)}` : s.sketch ? "sketch:"+(s.sketchLL||[]).map(p=>p[1].toFixed(6)+","+p[0].toFixed(6)).join(";") : "p:"+s.parcels.map(p=>p.oid).sort().join("+");
+function mainSoil(units){ if(!units || !units.length) return null; const nm = u => u.name.split(",")[0];
+  if(/^urban land/i.test(units[0].name)){ const nx = units.find(u=>!/^urban land/i.test(u.name)); return nx ? `${nm(nx)} (~${fmt(nx.share*100,0)}%; rest mapped as urban land)` : "Mapped as urban land only"; }
+  return `${nm(units[0])} (~${fmt(units[0].share*100,0)}%)`; }
+function summary(s){ const L = s.layers, ok = k => L[k] && L[k].status==="ok", st = {};
+  for(const [k] of STEPS) if(k!=="parcel") st[k] = L[k] ? L[k].status : "wait";
+  return { v:2, key:listKey(s), title:s.title, area:s.area, sample:!!s.sample, pin:!!s.pin, entered: s.sample ? null : s.sketch ? "sketched outline" : s.input, propId: s.propId || null,
+    acres: s.pin ? null : +s.acres.toFixed(2), feed: s.sample || s.pin ? null : ((acreage(s).rows.find(r=>/^Roll acreage/.test(r[0])) || [])[1] || null), gap: !!acreage(s).gap, st,
     flood: ok("flood") ? +(L.flood.shareSFHA*100).toFixed(0) : null, floodway: ok("flood") ? +(L.flood.shareFloodway*100).toFixed(0) : null,
-    wet: ok("wet") ? +(L.wet.share*100).toFixed(1) : null, stream: ok("water") ? L.water.crossing : null,
+    vzone: ok("flood") && (L.flood.zonesOnTract||[]).some(z=>/^V/.test(z)), femaYear: ok("flood") && L.flood.firm && L.flood.firm.effMs ? new Date(L.flood.firm.effMs).getUTCFullYear() : null,
+    wet: ok("wet") ? +(L.wet.share*100).toFixed(1) : null, stream: ok("water") ? (L.water.share > 0.02 ? `${fmt(L.water.share*100,0)}% under water` : L.water.crossing ? "Yes" : "No") : null,
+    road: ok("road") ? roadText(L.road, true) : null,
     relief: ok("terrain") ? +L.terrain.relief.toFixed(0) : null, slope: ok("terrain") ? +L.terrain.meanSlope.toFixed(1) : null,
-    soil: ok("soils") && L.soils.units[0] ? L.soils.units[0].name.split(",")[0] : null,
-    line: ok("power") ? (L.power.nearest ? +(L.power.nearest.d/5280).toFixed(1) : ">"+(s.powerMi||CONFIG.powerRadiusMi)) : null, kv: ok("power") && L.power.nearest ? L.power.nearest.kv : null,
+    soil: ok("soils") ? mainSoil(L.soils.units) : null,
+    line: ok("power") ? (L.power.nearest ? lineDistText(L.power.nearest.d, true) : `None within ${s.powerMi||CONFIG.powerRadiusMi} mi`) : null, kv: ok("power") && L.power.nearest ? L.power.nearest.kv : null,
     juris: ok("juris") ? (L.juris.text || (L.juris.name ? "City of "+L.juris.name : "Outside city limits")) : null,
     url: shareURL(s), date: new Date().toISOString().slice(0,10) }; }
-function addCurrentToList(){ if(!current) return; const sum = summary(current); LIST = LIST.filter(x=>x.key!==sum.key); LIST.push(sum); saveList(); $("#btnList").textContent = "On your short list"; toast("Added to your short list"); }
+function addCurrentToList(){ if(!current) return; if(!current.sample && STEPS.some(([k])=>k!=="parcel" && (!current.layers[k] || current.layers[k].status==="wait"))){ toast("Wait for the screen to finish, then add it"); return; } const sum = summary(current); LIST = LIST.filter(x=>x.key!==sum.key); LIST.push(sum); saveList(); $("#btnList").textContent = "On your short list"; toast("Added to your short list"); }
 function renderList(){
-  const t = $("#slTable"), n = LIST.length; $("#navCount").hidden = !n; $("#navCount").textContent = n; $("#slEmpty").hidden = !!n;
+  const t = $("#slTable"), n = LIST.length; $("#navCount").hidden = !n; $("#navCount").textContent = n; $("#slEmpty").hidden = !!n; $("#slNote").hidden = !n;
   if(!n){ t.innerHTML = ""; return; }
-  const v = (x, suf="") => x==null ? '<span class="opt">not loaded</span>' : esc(x)+suf;
-  t.innerHTML = `<thead><tr><th>Site</th><th>Acres</th><th>In mapped 1% floodplain</th><th>Mapped wetland</th><th>Stream crosses</th><th>Relief / avg slope</th><th>Main soil</th><th>Nearest line</th><th>Jurisdiction</th><th></th></tr></thead><tbody>` +
-    LIST.map((x,i)=>`<tr><td><a href="${esc(x.url)}">${esc(x.title)}</a><div class="opt">${esc(x.area)}${x.sample?" · sample":""}</div></td><td class="num">${acTxt(x.acres)}</td><td class="num">${v(x.flood,"%")}${x.floodway?` <span class="opt">(${x.floodway}% floodway)</span>`:""}</td><td class="num">${v(x.wet,"%")}</td><td>${x.stream==null?v(null):x.stream?"Yes":"No"}</td><td class="num">${x.relief==null?v(null):`${x.relief} ft / ${x.slope}%`}</td><td>${v(x.soil)}</td><td class="num">${x.line==null?v(null):`${esc(x.line)} mi${x.kv?` · ${x.kv} kV`:""}`}</td><td>${v(x.juris)}</td><td><button type="button" data-rm="${i}">Remove</button></td></tr>`).join("") + `</tbody>`;
+  // a cell says why it is empty: not read (the service didn't answer), not mapped, or simply absent on an older entry
+  const c = (x, k, val) => { const st = x.st && x.st[k]; if(st === "fail") return '<span class="opt">not read · rescreen</span>'; if(st === "none") return '<span class="opt">not mapped</span>'; return val == null ? '<span class="opt">–</span>' : val; };
+  t.innerHTML = `<thead><tr><th>Site</th><th>Acres</th><th>In mapped 1% floodplain</th><th>Mapped wetland</th><th>Stream or water</th><th>Mapped road frontage</th><th>Relief / avg slope</th><th>Soil</th><th>Nearest line</th><th>Jurisdiction</th><th></th></tr></thead><tbody>` +
+    LIST.map((x,i)=>`<tr><td><a href="${esc(x.url)}">${esc(x.title)}</a><div class="opt">${esc(x.area)}${x.sample?" · sample":""}${x.propId?` · ID ${esc(x.propId)}`:""}</div>${x.entered && x.entered !== x.title ? `<div class="opt">You entered: ${esc(x.entered)}</div>` : ""}</td>
+      <td class="num">${x.pin ? '<span class="opt">no parcel</span>' : acTxt(x.acres)}${x.feed ? `<div class="opt">roll ${acTxt(x.feed)}</div>` : ""}${x.gap ? '<div class="flag">check acreage</div>' : ""}</td>
+      <td class="num">${c(x,"flood", x.flood==null?null:`${x.flood}%${x.floodway?` <span class="opt">(${x.floodway}% floodway)</span>`:""}`)}${x.vzone?'<div class="flag">coastal V zone</div>':""}${x.femaYear && new Date().getFullYear()-x.femaYear >= 10 ? `<div class="opt">map from ${x.femaYear}</div>` : ""}</td>
+      <td class="num">${c(x,"wet", x.wet==null?null:x.wet+"%")}</td><td>${c(x,"water", x.stream==null?null:(x.stream===true?"Yes":x.stream===false?"No":esc(x.stream)))}</td>
+      <td>${c(x,"road", x.road==null?null:esc(x.road))}</td>
+      <td class="num">${c(x,"terrain", x.relief==null?null:`${x.relief} ft / ${x.slope}%`)}</td><td>${c(x,"soils", x.soil==null?null:esc(x.soil))}</td>
+      <td class="num">${c(x,"power", x.line==null?null:`${esc(typeof x.line==="number"?x.line+" mi":x.line)}${x.kv?` · ${x.kv} kV`:""}`)}</td><td>${c(x,"juris", x.juris==null?null:esc(x.juris))}</td><td><button type="button" data-rm="${i}">Remove</button></td></tr>`).join("") + `</tbody>`;
 }
 /* ===== Packet request (the gate: contact details in, packet by email) ===== */
 function updPacketForm(){ updRec(); const n = LIST.length; $("#listOpt").hidden = !n; $("#listN").textContent = n; $("#pkListItem").hidden = !n; }
@@ -1020,19 +1161,26 @@ async function submitRequest(e){
   e.preventDefault(); const f = e.target, err = $("#reqErr"); err.hidden = true;
   const d = Object.fromEntries(new FormData(f).entries());
   if(!d.name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(d.email||"") || !d.role || !d.timing){ err.textContent = "Please add your name, a valid email, your role and timing. Company and phone are optional."; err.hidden = false; return; }
+  if(current && !current.sample && !d.tract){ err.textContent = "Please tell us whether this is the tract you mean, so nobody scopes the wrong land."; err.hidden = false; $("#tractSet").scrollIntoView({behavior:"smooth", block:"center"}); return; }
+  d.proposal = d.want === "proposal";
   const s = current, rec = s ? recommend(s) : null, L = s ? s.layers : {};
   const clip = (v,n) => v == null || v === "" ? null : String(v).slice(0,n);
-  const siteRef = s ? (s.sample ? "sample:"+s.sampleId : s.sketch ? "sketch:"+s.sketchLL.map(p=>p[1].toFixed(6)+","+p[0].toFixed(6)).join(";") : (s.situs || s.input)) : null;
+  const siteRef = s ? (s.sample ? "sample:"+s.sampleId : s.pin ? `pin (no parcel): ${s.center.lat.toFixed(6)}, ${s.center.lng.toFixed(6)}` : s.sketch ? "sketch:"+s.sketchLL.map(p=>p[1].toFixed(6)+","+p[0].toFixed(6)).join(";") : (s.situs || s.input)) : null;
   const list = d.withList && LIST.length ? LIST.slice(-30).map(x=>({title:String(x.title).slice(0,120), url:String(x.url).slice(0,600), acres:x.acres})) : [];
   const packet = { v:1, link: s ? shareURL(s).slice(0,1500) : null, screen_no: s ? screenNo(s) : null, title: s ? String(s.title).slice(0,160) : null, stage:STAGE, type:TYPE, list,
-    failed_layers: s && !s.sample ? Object.keys(L).filter(k=>L[k] && L[k].status==="fail") : [], fema_effective: L.flood && L.flood.firm ? L.flood.firm.eff : null };
+    failed_layers: s && !s.sample ? Object.keys(L).filter(k=>L[k] && L[k].status==="fail") : [], unmapped_layers: s && !s.sample ? Object.keys(L).filter(k=>L[k] && L[k].status==="none") : [],
+    fema_effective: L.flood && L.flood.firm ? L.flood.firm.eff : null,
+    entered: s ? clip(s.input, 300) : null, matched: s ? clip(s.pin ? "no parcel at pin" : s.sketch ? "sketched outline" : s.situs || s.title, 300) : null, tract_confirm: d.tract || null,
+    parent: s && s.parent ? {prop_id:s.parent.propId, acres:+s.parent.acres.toFixed(2)} : null,
+    acreage: s ? acreage(s).rows.map(([l,v])=>({source:l, acres:+v.toFixed(3)})) : [], acreage_gap: s ? acreage(s).gap : null,
+    road_touch: L.road && L.road.status==="ok" ? L.road.touches : null, access_verified: false };
   const row = { kind:"request", goal:(d.proposal?"packet+proposal:":"packet:")+STAGE, site_type:TYPE || (s&&s.sample?s.type:null), survey: rec ? (rec.pri===SURVEYS.none ? (rec.add?rec.add.key:"unsure") : rec.pri.key) : null,
-    location: clip(siteRef, 400), lat: s ? +s.center.lat.toFixed(6) : null, lng: s ? +s.center.lng.toFixed(6) : null, acres: s ? +s.acres.toFixed(2) : null,
+    location: clip(siteRef, 400), lat: s ? +s.center.lat.toFixed(6) : null, lng: s ? +s.center.lng.toFixed(6) : null, acres: s && !s.pin ? +s.acres.toFixed(2) : null,
     flood_zones: L.flood && L.flood.status==="ok" ? clip(L.flood.zonesOnTract.join(", ") || "X", 200) : null, pct_outside_floodplain: L.flood && L.flood.status==="ok" ? +((1-L.flood.shareSFHA)*100).toFixed(1) : null,
     county: s ? clip(s.county,80) : null, legal: s ? clip(s.legal,1000) : null, prop_id: s ? clip(s.propId,80) : null, is_sample: !!(s && s.sample),
     name: d.name.slice(0,200), email: d.email.slice(0,320), phone: clip(d.phone,40), company: clip(d.company,200), note: clip(d.note,1000),
     role: clip(d.role,60), timing: clip(d.timing,60), wants_records: !!d.records, wants_proposal: !!d.proposal, packet };
-  const dry = /[?&]dry=1/.test(location.search) || /^TEST\b/i.test(d.name);
+  const dry = DRY || /^TEST\b/i.test(d.name);
   const btn = f.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "Opening…";
   try {
     if(!dry){
@@ -1044,9 +1192,10 @@ async function submitRequest(e){
     $("#reqDone").hidden = false; $("#reqDone").focus(); unlockBrief(); toast(dry ? "Test mode: nothing was sent." : "Packet unlocked.");
   } catch(ex){
     err.innerHTML = `The request didn't go through. Please email <a href="mailto:surveytx@txasc.com?subject=${encodeURIComponent("Site Screen packet: "+(s?s.title:"site"))}&body=${encodeURIComponent((s?shareURL(s)+"\n\n":"")+(d.note||""))}">surveytx@txasc.com</a> or call (469) 317-0250.`; err.hidden = false;
-  } finally { btn.disabled = false; btn.textContent = "Open my packet"; }
+  } finally { btn.disabled = false; updWant(); }
 }
 
+function updWant(){ const f = $("#reqForm"), w = f && f.elements.want ? f.elements.want.value : "packet"; const b = $("#reqGo"); if(b) b.textContent = w === "proposal" ? "Open my packet and request a proposal" : "Open my packet"; }
 /* ===== Bulk ===== */
 async function runBulk(){
   const lines = $("#bulkText").value.split(/\n+/).map(x=>x.trim()).filter(Boolean).slice(0,30); if(!lines.length) return;
@@ -1066,13 +1215,13 @@ function setView(v){ VIEW = v; $("#tabSheet").setAttribute("aria-selected", Stri
   $("#sheetWrap").hidden = v!=="sheet"; $("#modelWrap").hidden = v!=="model"; $("#layers").hidden = v!=="sheet";
   cancelAnimationFrame(MODEL.raf); if(v==="model"){ MODEL.auto = !matchMedia("(prefers-reduced-motion: reduce)").matches; modelLoop(); } }
 const art = n => /^[AEIOU]/i.test(n) ? "an" : "a";
-function updRec(){ const el = $("#pfRec"), hd = $("#resRec"); if(!el) return; if(!current || current.sketch && !current.layers.flood){ el.hidden = true; if(hd) hd.hidden = true; return; }
+function updRec(){ const el = $("#pfRec"), hd = $("#resRec"); if(!el) return; if(!current || current.pin || current.sketch && !current.layers.flood){ el.hidden = true; if(hd) hd.hidden = true; return; }
   const r = recommend(current); el.hidden = false;
   const add = r.add ? r.add.name.toLowerCase().replace("alta/nsps","ALTA/NSPS") : null;
-  el.innerHTML = r.pri===SURVEYS.none ? `<b>Our read:</b> no survey needed yet. ${esc(r.why)}${add?` When it moves forward, plan on ${art(add)} ${esc(add)}.`:""}`
+  el.innerHTML = r.pri===SURVEYS.none ? `<b>Our read:</b> the public record is enough to compare sites at this stage; this screen cannot tell you what a survey would find. ${esc(r.why)}${add?` When it moves forward, plan on ${art(add)} ${esc(add)}.`:""}`
     : `<b>Our read:</b> start with ${art(r.pri.name)} ${esc(r.pri.name)}${add?`, then ${art(add)} ${esc(add)}`:""}. ${esc(r.why)}`;
-  if(hd){ hd.hidden = false; hd.innerHTML = (r.pri===SURVEYS.none ? `<b>Our read:</b> no survey needed yet${add?`; plan on ${art(add)} ${esc(add)} when it moves forward`:""}.`
-    : `<b>Our read:</b> start with ${art(r.pri.name)} ${esc(r.pri.name)}${add?`, then ${art(add)} ${esc(add)}`:""}.`) + ` <a href="#packet">Ask us about it</a>`; } }
+  if(hd){ hd.hidden = false; hd.innerHTML = (r.pri===SURVEYS.none ? `<b>Our read:</b> fine for comparing sites${add?`; plan on ${art(add)} ${esc(add)} when it moves forward`:""}.`
+    : `<b>Our read:</b> start with ${art(r.pri.name)} ${esc(r.pri.name)}${add?`, then ${art(add)} ${esc(add)}`:""}.`) + ` <a href="#packet">Ask us what to verify next</a>`; } }
 function setType(k, silent){ TYPE = TYPE===k && !silent ? null : k; document.querySelectorAll("#types .chip").forEach(c=>c.setAttribute("aria-pressed", String(c.dataset.k===TYPE))); if(current && !silent) renderBrief(current); updRec(); }
 function setStage(k){ STAGE = k; document.querySelectorAll("#stages .chip").forEach(c=>c.setAttribute("aria-pressed", String(c.dataset.k===STAGE))); if(current) renderBrief(current); updRec(); }
 
@@ -1085,6 +1234,7 @@ const WF_ICO = {
   layers:'<path d="M12 3l9 5-9 5-9-5z"/><path class="a" d="M3 13l9 5 9-5"/>',
   contour:'<path d="M3 17c3-5 6-7 9-7s6 2 9 7"/><path class="a" d="M6 17c2-3 4-4 6-4s4 1 6 4"/><path d="M3 20h18"/>',
   bolt:'<path d="M13 2L5 13h6l-1 9 8-12h-6z"/>',
+  road:'<path d="M8 3L5 21M16 3l3 18"/><path class="a" d="M12 4v3M12 10v3M12 16v3"/>',
   sheet:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M16 4v16"/><path class="a" d="M6 15l3-5 3 3 2-3"/>'
 };
 const WF = [
@@ -1094,7 +1244,7 @@ const WF = [
   {id:"water", t:"Tracing water and wetlands",   d:"USFWS NWI and USGS NHD",                keys:["wet","water"], ico:"drop"},
   {id:"soils", t:"Reading the soils",            d:"NRCS SSURGO",                           keys:["soils"],  ico:"layers"},
   {id:"topo",  t:"Gathering the topo",           d:"USGS 3DEP public lidar",                keys:["terrain"],ico:"contour"},
-  {id:"power", t:"Checking power and city limits",d:"HIFLD lines and TxGIO city limits",    keys:["power","juris"], ico:"bolt"},
+  {id:"power", t:"Checking roads, power and city limits",d:"OpenStreetMap roads, HIFLD lines, TxGIO city limits", keys:["road","power","juris"], ico:"bolt"},
   {id:"exhibit",t:"Drafting the exhibit",        d:"Laying it out on the ASC sheet",        keys:"all",      ico:"sheet"}
 ];
 const LST = {}, MON_T = {}, WF_T = {};
@@ -1106,7 +1256,7 @@ function wfState(step){
   if(st.some(x=>x==="wait")) return "wait"; if(st.every(x=>x==="idle")) return "idle";
   if(st.every(x=>x==="ok"||x==="na")) return "ok"; return st.some(x=>x==="ok"||x==="na") ? "part" : "fail";
 }
-const WF_SRC_NAME = {wet:"wetlands map", water:"stream map", power:"transmission map", juris:"city limits map"};
+const WF_SRC_NAME = {road:"road map", wet:"wetlands map", water:"stream map", power:"transmission map", juris:"city limits map"};
 function wfDetail(step, s){
   if(!s) return step.d;
   if(Array.isArray(step.keys) && step.keys.length > 1){ const miss = step.keys.filter(k=>lst(k)==="fail").map(k=>WF_SRC_NAME[k]||k);
@@ -1114,13 +1264,13 @@ function wfDetail(step, s){
   return wfDetail0(step, s); }
 function wfDetail0(step, s){ const L = s.layers, ok = k => L[k] && L[k].status==="ok", r = s.refs || {};
   switch(step.id){
-    case "rec": return s.sample ? "Illustrative sample record" : s.sketch ? "Sketched outline, no record attached" : [s.propId && "ID " + s.propId, r.abstract && "Abstract " + r.abstract, r.lot && "Lot " + r.lot, r.block && "Block " + r.block].filter(Boolean).slice(0,3).join(" · ") || (s.county ? titleCase(s.county) + " County roll" : step.d);
-    case "sketch": return `${acTxt(s.acres)} acres ± · ${s.rings.reduce((t,x)=>t+x.length,0)} vertices`;
+    case "rec": return s.sample ? "Illustrative sample record" : s.pin ? "No appraisal parcel at the pin" : s.sketch ? "Sketched outline, no record attached" : [s.propId && "ID " + s.propId, r.abstract && "Abstract " + r.abstract, r.lot && "Lot " + r.lot, r.block && "Block " + r.block].filter(Boolean).slice(0,3).join(" · ") || (s.county ? titleCase(s.county) + " County roll" : step.d);
+    case "sketch": return s.pin ? `${PIN_R}-ft circle around the pin` : `${acTxt(s.acres)} acres ± · ${s.rings.reduce((t,x)=>t+x.length,0)} vertices`;
     case "flood": return ok("flood") ? (L.flood.shareSFHA>0.005 ? `~${fmt(L.flood.shareSFHA*100,0)}% in mapped 1% floodplain` : "Outside mapped 1% floodplain") + (L.flood.panel && !s.sample ? ` · ${L.flood.panel}` : "") + (L.flood.firm && L.flood.firm.eff && !s.sample ? ` · map effective ${L.flood.firm.eff}` : "") : step.d;
     case "water": return ok("wet") || ok("water") ? [ok("wet") ? (L.wet.share>0.002 ? `~${fmt(L.wet.share*100,1)}% mapped wetland` : "No mapped wetland on tract") : null, ok("water") ? (L.water.crossing ? "stream touches tract" : "no mapped stream across") : null].filter(Boolean).join(" · ") : step.d;
     case "soils": return ok("soils") && L.soils.units[0] ? `${L.soils.units[0].name.split(",")[0]} · group ${L.soils.units[0].hyd||"n/a"}` : step.d;
     case "topo": return ok("terrain") ? `${fmt(L.terrain.min,0)}–${fmt(L.terrain.max,0)} ft · ${s._contourIv||"–"}-ft contours` : step.d;
-    case "power": return [ok("power") ? (L.power.nearest ? `line ~${fmt(L.power.nearest.d/5280,1)} mi` : "no line nearby") : null, ok("juris") ? (L.juris.name ? titleCase(L.juris.name) : L.juris.text || "outside city limits") : null].filter(Boolean).join(" · ") || step.d;
+    case "power": return [ok("power") ? (L.power.nearest ? lineDistText(L.power.nearest.d, true).toLowerCase() : "no line nearby") : null, ok("juris") ? (L.juris.name ? titleCase(L.juris.name) : L.juris.text || "outside city limits") : null, ok("road") ? (L.road.touches ? "road frontage mapped" : "no mapped road frontage") : null].filter(Boolean).join(" · ") || step.d;
     case "exhibit": return wfState(step)==="ok" ? `Sheet 1 of 1 · ${screenNo(s)}` : step.d;
   }
   return step.d;
@@ -1146,6 +1296,7 @@ function paintWorkflow(){
   const m = $("#monList"); if(m) m.innerHTML = WF.map((w,i)=>row(w,i,false)).join("");
   const strip = $("#wfStrip"); if(strip) strip.innerHTML = WF.map((w,i)=>row(w,i,true)).join("");
   const pct = Math.round(done/WF.length*100); document.querySelectorAll(".wf-bar i").forEach(b=>b.style.width = pct+"%");
+  renderPanelHead();
   const ms = $("#monState"); if(ms){ ms.textContent = busy ? `Working · ${done} of ${WF.length}` : done===WF.length ? "Exhibit drafted" : "Standing by"; ms.classList.toggle("run", busy); }
   const ws = $("#wfState"); if(ws) ws.textContent = busy ? `Step ${Math.min(done+1, WF.length)} of ${WF.length} · ${WF[Math.min(done, WF.length-1)].t}` : done===WF.length ? "Worked up · sheet drafted" : "";
 }
@@ -1157,7 +1308,7 @@ function setStatus(key, st){
 }
 function resetMonitor(){ STEPS.forEach(([k])=>{ LST[k] = "idle"; }); Object.keys(WF_T).forEach(k=>delete WF_T[k]); WF_SHOWN = 0; clearTimeout(WF_TICK); WF_TICK = 0; renderWorkflow(); renderPanelHead(); }
 function renderPanelHead(){
-  const pl = $("#panelLive"); if(!pl) return; const n = STEPS.length, ok = STEPS.filter(([k])=>LST[k]==="ok"||LST[k]==="na").length, busy = STEPS.some(([k])=>LST[k]==="wait");
+  const pl = $("#panelLive"); if(!pl) return; const n = STEPS.length, ok = STEPS.filter(([k])=>LST[k]==="ok"||LST[k]==="na").length, busy = STEPS.some(([k])=>LST[k]==="wait") || (WF_SHOWN < WF.length && STEPS.some(([k])=>LST[k] && LST[k]!=="idle"));
   pl.textContent = busy ? `Reading · ${ok}/${n}` : `${ok}/${n} layers read`; pl.classList.toggle("busy", busy);
 }
 
@@ -1176,7 +1327,7 @@ function guessKind(v){ v = v.trim(); if(!v) return null;
 function hudCoord(c){ const h = $("#hudCoord"); if(h && c) h.textContent = `Lat ${c.lat.toFixed(5)} · Lng ${c.lng.toFixed(5)}`; }
 function floodSide(s){ const f = s.layers.flood; if(!f || f.status!=="ok" || f.shareSFHA <= 0.005) return null;
   const sf = f.polys.filter(p=>p.sfha), [x0,y0,x1,y1] = bbox(s.rings), n = 40; let sx=0, sy=0, k=0;
-  for(let i=0;i<n;i++) for(let j=0;j<n;j++){ const x = x0+(i+.5)*(x1-x0)/n, y = y0+(j+.5)*(y1-y0)/n; if(inRings(x,y,s.rings) && sf.some(p=>inRings(x,y,p.rings))){ sx+=x; sy+=y; k++; } }
+  for(let i=0;i<n;i++) for(let j=0;j<n;j++){ const x = x0+(i+.5)*(x1-x0)/n, y = y0+(j+.5)*(y1-y0)/n; if(inTract(s,x,y) && sf.some(p=>inRings(x,y,p.rings))){ sx+=x; sy+=y; k++; } }
   if(!k || f.shareSFHA > 0.8) return null; const [cx,cy] = centroid(s.rings); const dx = sx/k-cx, dy = sy/k-cy;
   return Math.hypot(dx,dy) < Math.sqrt(s.areaSqft)*0.12 ? null : compass(dx,dy); }
 function insights(s){
@@ -1191,11 +1342,11 @@ function insights(s){
   const wetOn = ok("wet") && L.wet.share > 0.002, strOn = ok("water") && L.water.crossing;
   if(wetOn || strOn) out.push({c:"#5fd3a8", h:"Water features", p:`${wetOn?`About ${fmt(L.wet.share*100,1)}% of the tract is mapped as wetland or water`:""}${wetOn&&strOn?", and a":strOn?"A":""}${strOn?` mapped stream touches the tract${L.water.names&&L.water.names.length?` (${L.water.names[0]})`:""}`:""}. An environmental consultant decides whether a delineation is needed; a survey then locates the limits.`});
   const r = s.refs || {};
-  if(!s.sample && !s.sketch){ if(r.lot && r.block) out.push({c:"#ff6a5e", h:"Record", p:`Reads as a platted lot: Lot ${r.lot}, Block ${r.block}${r.addition?`, ${titleCase(r.addition)}`:""}. The recorded plat is where the boundary work starts.`});
+  if(!s.sample && !s.sketch && !s.pin){ if(r.lot && r.block) out.push({c:"#ff6a5e", h:"Record", p:`Reads as a platted lot: Lot ${r.lot}, Block ${r.block}${r.addition?`, ${titleCase(r.addition)}`:""}. The recorded plat is where the boundary work starts.`});
     else if(r.abstract) out.push({c:"#ff6a5e", h:"Record", p:`Reads as unplatted acreage in Abstract ${r.abstract}. Lines come from deed calls, so plan for more record research and corner recovery than on a platted lot.`});
     if(s.added.length) out.push({c:"#ff6a5e", h:"Assemblage", p:`${s.parcels.length} appraisal parcels combined. The common lines, and any gaps or overlaps between the deeds, are what a boundary survey resolves.`}); }
   if(ok("power") && (type==="dc" || type==="ind" || s.acres >= 40)){ const n = L.power.nearest;
-    out.push({c:"#f0b35a", h:"Transmission", p:`${n ? (n.d===0 ? "A mapped transmission line crosses the tract" : `The nearest mapped transmission line is about ${fmt(n.d/5280,1)} mi away`) + (n.kv?` (${fmt(n.kv,0)} kV class)`:"") : `No transmission line is mapped within ${s.powerMi||CONFIG.powerRadiusMi} mi`}. Proximity only; capacity is a utility and ERCOT question.`}); }
+    out.push({c:"#f0b35a", h:"Transmission", p:`${n ? lineDistText(n.d) + (n.kv?` (${fmt(n.kv,0)} kV class)`:"") : `No transmission line is mapped within ${s.powerMi||CONFIG.powerRadiusMi} mi`}. Proximity only; capacity is a utility and ERCOT question.`}); }
   return out.slice(0,4);
 }
 /* motion cards: each theme gets a quiet b-roll loop under its text (a drawn motif stands in until the clip loads) */
@@ -1245,7 +1396,7 @@ function sheetHover(e){
   const [x,y] = sheetXform(s).inv(px,py), ll = s.P.i([x,y]), t = s.layers.terrain, f = s.layers.flood;
   const z = t && t.status==="ok" ? gridAt(t.grid, x, y) : NaN;
   const inFlood = f && f.status==="ok" && f.polys.some(p=>p.sfha && inRings(x,y,p.rings));
-  hud.innerHTML = `<b>${s.sample?"sample":ll[1].toFixed(5)+", "+ll[0].toFixed(5)}</b>${isFinite(z)?` · ~${fmt(z,0)} ft (lidar)`:""}${inFlood?" · mapped 1% floodplain":""}${inRings(x,y,s.rings)?" · on tract":""}`;
+  hud.innerHTML = `<b>${s.sample?"sample":ll[1].toFixed(5)+", "+ll[0].toFixed(5)}</b>${isFinite(z)?` · ~${fmt(z,0)} ft (lidar)`:""}${inFlood?" · mapped 1% floodplain":""}${inTract(s,x,y)?" · on tract":""}`;
   const r = $("#sheetWrap").getBoundingClientRect(); hud.style.left = (e.clientX-r.left)+"px"; hud.style.top = (e.clientY-r.top)+"px"; hud.hidden = false;
 }
 
@@ -1270,13 +1421,17 @@ function init(){
   $("#slTable").addEventListener("click", e=>{ const b = e.target.closest("[data-rm]"); if(b){ LIST.splice(+b.dataset.rm,1); saveList(); } });
   $("#btnSketch").addEventListener("click", ()=>{ if(SKETCH) endSketch(); else startSketch(); });
   $("#sketchUndo").addEventListener("click", ()=>{ if(SKETCH){ SKETCH.pts.pop(); updSketch(); } });
-  $("#sketchCancel").addEventListener("click", ()=>{ const wasProbe = current && current.title==="Sketch a tract here"; endSketch(); if(wasProbe){ $("#results").hidden = true; current = null; } });
+  $("#sketchCancel").addEventListener("click", ()=>endSketch());
   $("#sketchDone").addEventListener("click", finishSketch);
   $("#sheet").addEventListener("click", e=>{
     if(SKETCH){ const [px,py] = svgPoint(e); if(px<DX||px>DX+DW||py<DY||py>DY+DH) return; SKETCH.pts.push(sheetXform(SKETCH.base).inv(px,py)); updSketch(); return; }
     const p = e.target.closest(".adjp"); if(p) toggleNeighbor(p.dataset.oid);
   });
-  $("#readout").addEventListener("click", e=>{ const b = e.target.closest(".pick"); if(!b) return; if(SKETCH) endSketch(); $("#loc").value = b.dataset.ll; screen(b.dataset.ll); });
+  document.addEventListener("click", e=>{ const b = e.target.closest(".pick"); if(!b) return; if(SKETCH) endSketch(); screen(b.dataset.ll); });
+  $("#matchBox").addEventListener("click", e=>{ const b = e.target.closest("[data-m]"); if(b) onMatch(b.dataset.m); });
+  $("#btnProposal").addEventListener("click", ()=>{ const r = $('#reqForm input[name="want"][value="proposal"]'); if(r){ r.checked = true; updWant(); } });
+  $("#reqForm").addEventListener("change", e=>{ if(e.target.name === "want") updWant(); if(e.target.name === "tract" && current){ current.confirm = e.target.value; renderMatch(current); } });
+  if(DRY) document.body.classList.add("dry");
   $("#reqForm").addEventListener("submit", submitRequest);
   $("#again").addEventListener("click", ()=>{ $("#reqForm").reset(); $("#reqForm").hidden = false; $("#reqDone").hidden = true; $("#loc").focus(); window.scrollTo({top:0, behavior:"smooth"}); });
   initModelInput(); renderList(); renderMonitor(); heroReel();
