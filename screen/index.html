@@ -50,21 +50,16 @@
   <img class="hero-img" src="img/hero.jpg" alt="" width="1920" height="1080" fetchpriority="high">
   <div class="hero-reel" id="heroReel" aria-hidden="true"></div>
   <div class="hero-shade"></div>
-  <div class="hud" aria-hidden="true">
-    <span class="hud-tl">Site screen · Texas</span>
-    <span class="hud-tr" id="hudCoord">Lat --.----- · Lng ---.-----</span>
-    <span class="hud-bl">8 public layers · No account</span>
-    <span class="hud-br">Richardson, TX</span>
-  </div>
+  <span class="hud-tr" id="hudCoord" hidden></span>
 
   <div class="hero-in">
     <div class="hero-copy">
       <p class="eyebrow"><span class="dot"></span>Free site screen for Texas land</p>
-      <h1 id="h1">What the public record says about a tract, <span class="accent">drawn on one sheet.</span></h1>
-      <p class="lede">Drop in a location. The screen finds the appraisal parcel and reads the floodplain, wetlands, streams, soils, public lidar, transmission lines and city limits, then lays it all out on the same sheet format our surveyors deliver. Run it on every site on your list.</p>
+      <h1 id="h1">Screen a Texas site <span class="accent">before you commit.</span></h1>
+      <p class="lede">See what public records flag, what they can't tell you, and what to verify next. Drop in a location and the screen reads the appraisal parcel, floodplain, wetlands, streams, soils, public lidar, road frontage, transmission lines and city limits, then lays it out on the sheet format our surveyors deliver.</p>
 
       <form class="console" id="console" autocomplete="off" novalidate>
-        <div class="c-step"><span class="c-n">01</span><label for="loc">Where is the site?</label></div>
+        <div class="c-step"><label for="loc">Where is the site?</label></div>
         <div class="field-row">
           <input id="loc" name="loc" type="text" inputmode="text" placeholder="Address, coordinates, plus code or map link" aria-describedby="guide">
           <button class="btn btn-red btn-lg" id="go" type="submit"><span>Screen this site</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
@@ -80,6 +75,7 @@
           <div class="bulk-row"><button class="btn btn-ghost" type="button" id="bulkGo">Screen the list</button><span class="bulk-status" id="bulkStatus" role="status"></span></div>
         </div>
         <p class="notice" id="notice" role="alert" hidden></p>
+        <div class="picks notice-picks" id="noticePicks" hidden></div>
       </form>
     </div>
 
@@ -104,9 +100,11 @@
       <div class="res-actions">
         <button class="btn btn-line" type="button" id="btnShare">Copy share link</button>
         <button class="btn btn-line" type="button" id="btnList">Add to short list</button>
-        <a class="btn btn-red" href="#packet" id="btnPacket">Get the full packet</a>
+        <a class="btn btn-line" href="#packet" id="btnPacket">Get the full packet</a>
+        <a class="btn btn-red" href="#packet" id="btnProposal">Request a proposal</a>
       </div>
     </div>
+    <div class="match" id="matchBox" hidden aria-live="polite"></div>
 
     <div class="wf-strip-wrap" aria-label="Survey steps"><div class="wf-strip-h"><span>Working the site</span><span id="wfState"></span></div><div class="wf-bar" aria-hidden="true"><i></i></div><ol class="wf-strip" id="wfStrip"></ol></div>
 
@@ -156,7 +154,7 @@
       <div class="packet-copy">
         <p class="kicker">The full packet</p>
         <h2>Open the complete screen.</h2>
-        <p>The packet is what you forward to a partner, a lender or your engineer. Tell us who you are and it opens right here, ready to save as a PDF. A surveyor looks over every request.</p>
+        <p>The packet is what you forward to a partner, a lender or your engineer. Tell us who you are and it opens right here, ready to save as a PDF. The findings above stay free either way.</p>
         <ul class="pk-list" id="pkList">
           <li><b>Full-size sheet</b> in the same 24 × 36 layout as our survey deliverables</li>
           <li><b>Layer-by-layer findings</b> with the agency, dataset and date behind each one</li>
@@ -173,7 +171,22 @@
 
       <div class="packet-form">
         <form id="reqForm" novalidate>
+          <fieldset class="pf-want" id="wantSet">
+            <legend>What would you like?</legend>
+            <label class="want"><input type="radio" name="want" value="packet" checked><span><b>The packet</b><i>Full sheet and brief, open here to save as a PDF</i></span></label>
+            <label class="want"><input type="radio" name="want" value="proposal"><span><b>The packet and a survey proposal</b><i>A written scope and price for this tract. Nothing is ordered until you approve it.</i></span></label>
+          </fieldset>
           <p class="pf-site" id="pfSite">Screen a site first, or describe it in the note.</p>
+          <p class="pf-gap" id="pfGap" hidden></p>
+          <fieldset class="pf-chips" id="tractSet">
+            <legend>Is this the tract you mean?</legend>
+            <div class="chip-row">
+              <label class="chip-r"><input type="radio" name="tract" value="whole"><span>Yes, the whole parcel</span></label>
+              <label class="chip-r"><input type="radio" name="tract" value="more"><span>More than this parcel</span></label>
+              <label class="chip-r"><input type="radio" name="tract" value="part"><span>Only part of it</span></label>
+              <label class="chip-r"><input type="radio" name="tract" value="unsure"><span>Not sure yet</span></label>
+            </div>
+          </fieldset>
           <fieldset class="pf-chips" id="stageSet">
             <legend>Where are you with this site?</legend>
             <div class="chip-row" id="stages"></div>
@@ -201,12 +214,11 @@
               </select>
             </label>
             <label class="wide">Note <span class="opt">optional</span><textarea name="note" rows="2" placeholder="Anything that would help, such as the part of the tract you care about or a target closing date"></textarea></label>
-            <label class="check wide" id="listOpt" hidden><input type="checkbox" name="withList" checked> Include my short list (<span id="listN">0</span> sites)</label>
-            <label class="check wide"><input type="checkbox" name="proposal"> Also send a proposal for survey work on this site</label>
+            <label class="check wide" id="listOpt" hidden><input type="checkbox" name="withList"> Include my short list (<span id="listN">0</span> sites). It is stored with your request.</label>
             <label class="check wide"><input type="checkbox" name="records"> Also research the recorded deeds and plats</label>
           </div>
-          <button class="btn btn-red btn-lg" type="submit">Open my packet</button>
-          <p class="pf-fine">We use your details to send the packet and follow up on this site. Nothing is shared or sold.</p>
+          <button class="btn btn-red btn-lg" type="submit" id="reqGo">Open my packet</button>
+          <p class="pf-fine">We use your details to follow up on this site. Nothing is shared or sold. Road access, boundary lines and acreage are not verified by this screen.</p>
           <p class="notice" id="reqErr" role="alert" hidden></p>
         </form>
         <div class="done" id="reqDone" hidden tabindex="-1">
@@ -214,7 +226,7 @@
           <h3 id="doneH">Your packet is open below.</h3>
           <ol class="next">
             <li><strong>Save it now.</strong> The sheet and the full brief are unlocked on this screen. Save them as a PDF to forward to your team.</li>
-            <li><strong>A surveyor looks it over.</strong> Your request comes straight to our office. If anything on the screen reads wrong for this site, we'll reach you at <span id="doneEmail">your email</span>.</li>
+            <li><strong>Your request reaches our office.</strong> If anything on the screen reads wrong for this site, we'll reach you at <span id="doneEmail">your email</span>.</li>
             <li><strong>If you asked for a proposal,</strong> it comes as a separate written scope and price. Nothing is ordered until you approve it.</li>
           </ol>
           <p>Questions in the meantime: <a href="tel:+14693170250">(469) 317-0250</a> or <a href="mailto:surveytx@txasc.com">surveytx@txasc.com</a>.</p>
@@ -263,6 +275,7 @@
     </div>
     <p class="sl-note">Saved in this browser only. Nothing on the list reaches ASC unless you ask for a packet.</p>
     <div class="sl-table-wrap"><table class="sl-table" id="slTable"></table></div>
+    <p class="sl-note" id="slNote" hidden>Relief is the high ground minus the low ground inside the outline. Average slope is the mean grade across it, from public lidar, so a flat lot with one steep bank can show low relief and a higher slope. Road frontage means a mapped public road line runs within about 100 ft of the tract; it is not legal access. Each link reruns the screen with today's data.</p>
     <p class="sl-empty" id="slEmpty">Screen a site and choose <strong>Add to short list</strong> to compare tracts side by side.</p>
   </div>
 </section>
