@@ -73,6 +73,7 @@
           <label for="bulkText">One location per line, up to 30. Each site is screened in turn and added to your short list.</label>
           <textarea id="bulkText" rows="4" placeholder="32.6411, -97.0583&#10;FM 664 and I-45, Ennis TX&#10;8644R2XQ+5C"></textarea>
           <div class="bulk-row"><button class="btn btn-ghost" type="button" id="bulkGo">Screen the list</button><span class="bulk-status" id="bulkStatus" role="status"></span></div>
+          <ol class="bulk-list" id="bulkList" hidden></ol>
         </div>
         <p class="notice" id="notice" role="alert" hidden></p>
         <div class="picks notice-picks" id="noticePicks" hidden></div>
@@ -95,6 +96,7 @@
         <p class="kicker" id="resKind">Site screen</p>
         <h2 id="resTitle">Site</h2>
         <p class="res-sub" id="resSub"></p>
+        <p class="res-status" id="resStatus" role="status" aria-live="polite"></p>
         <p class="res-rec" id="resRec" hidden></p>
       </div>
       <div class="res-actions">
@@ -103,6 +105,18 @@
         <a class="btn btn-line" href="#packet" id="btnPacket">Get the full packet</a>
         <a class="btn btn-red" href="#packet" id="btnProposal">Request a proposal</a>
       </div>
+    </div>
+    <div class="covers" id="covers" hidden>
+      <h3>What this covers</h3>
+      <ul>
+        <li>Every figure comes from public maps, read live and kept in this browser for up to a week. Each layer's source is named beside it.</li>
+        <li>Parcel lines are appraisal maps drawn for taxes, not boundaries. They can be off by tens of feet, and acreage is shown by source because the sources often disagree.</li>
+        <li>Floodplain percentages are an approximation from an aligned FEMA map overlay, not an on-the-ground elevation survey. Where FEMA has no map, the land is unstudied, not cleared.</li>
+        <li>Wetlands are mapped indicators from the National Wetlands Inventory, not a delineation. Soils and terrain are screening reads, not a geotechnical report or design topography.</li>
+        <li>Transmission lines are shown by proximity only and say nothing about available capacity. City limits are mapped limits, not a zoning finding.</li>
+        <li>Road frontage means a mapped public road line runs within about 100 ft of the tract. It is not legal access; frontage, right-of-way and easements are confirmed by title and survey.</li>
+        <li>This is a preliminary screen, not a survey, and not for conveyance, design or construction.</li>
+      </ul>
     </div>
     <div class="match" id="matchBox" hidden aria-live="polite"></div>
 
@@ -134,7 +148,7 @@
           <div class="model-mark" aria-hidden="true">PRELIMINARY MODEL · NOT A SURVEY</div>
           <p class="model-cap" id="modelCap"></p>
         </div>
-        <p class="sheet-note">Screen preview. The full-size sheet comes with the packet. Appraisal parcel lines are not a boundary and can be off by tens of feet; every figure is approximate and from public data. Not for conveyance, design or construction.</p>
+        <p class="sheet-note">Screen preview. The full-size sheet comes with the packet.</p>
       </div>
 
       <aside class="panel" aria-label="Screen summary">
