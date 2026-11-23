@@ -223,10 +223,15 @@ function clipRing(r, [x0,y0,x1,y1]){
       if(ia){ out.push(a); if(!ib) out.push(cut(a,b)); } else if(ib) out.push(cut(a,b)); } }
   if(out.length < 3) return null; out.push(out[0]); return out; }
 const MAX_RING = 4000;
-function thinRing(r){ if(r.length <= MAX_RING) return r; const k = Math.ceil(r.length/MAX_RING), o = r.filter((_,i)=>i%k===0); o.push(r[r.length-1]); return o; }
+/* thin by distance, not by index: a vertex is dropped only when it lies within tol of the last kept one, so the outline
+   moves by at most tol anywhere. tol starts tiny and doubles until the ring fits the budget. */
+function thinRing(r, span){ if(r.length <= MAX_RING) return r;
+  for(let tol = Math.max(0.25, span/8000); ; tol *= 2){ const o = [r[0]]; let [lx,ly] = r[0];
+    for(let i=1;i<r.length-1;i++){ const [x,y] = r[i]; if(Math.abs(x-lx) > tol || Math.abs(y-ly) > tol){ o.push(r[i]); lx = x; ly = y; } }
+    o.push(r[r.length-1]); if(o.length <= MAX_RING || tol > span) return o; } }
 function fitRings(rings, frame){ const [x0,y0,x1,y1] = frame, px = (x1-x0)*0.25, py = (y1-y0)*0.25, box = [x0-px, y0-py, x1+px, y1+py];
   return rings.map(r=>{ const [a,b,c,d] = bbox([r]); if(c < box[0] || a > box[2] || d < box[1] || b > box[3]) return null;
-    const inside = a >= box[0] && c <= box[2] && b >= box[1] && d <= box[3]; return thinRing(inside ? r : clipRing(r, box) || []); }).filter(r=>r && r.length >= 4); }
+    const inside = a >= box[0] && c <= box[2] && b >= box[1] && d <= box[3]; return thinRing(inside ? r : clipRing(r, box) || [], Math.max(box[2]-box[0], box[3]-box[1])); }).filter(r=>r && r.length >= 4); }
 function tractShare(s, test, n=110){ const [x0,y0,x1,y1]=bbox(s.rings), dx=(x1-x0)/n, dy=(y1-y0)/n; let tot=0, hit=0;
   for(let i=0;i<n;i++) for(let j=0;j<n;j++){ const x=x0+(i+.5)*dx, y=y0+(j+.5)*dy; if(!inTract(s,x,y)) continue; tot++; if(test(x,y)) hit++; }
   return tot ? hit/tot : 0; }
