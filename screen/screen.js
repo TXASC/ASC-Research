@@ -288,8 +288,10 @@ async function fetchParcelAtTx(p){
 }
 async function fetchNeighbors(env, exceptOid){
   const fb = fallbackFor({lng:(env[0]+env[2])/2, lat:(env[1]+env[3])/2});
-  let st; try { st = await fetchNeighborsTx(env, exceptOid); } catch(e){ if(!fb) throw e; st = []; }
-  if(st.length || !fb) return st;
+  // fall back only when the statewide feed has no parcels here at all; a tract whose only statewide hit is itself
+  // must not be re-read from the county layer, where its id differs and it would come back as its own neighbor
+  let st; try { st = await fetchNeighborsTx(env, null); } catch(e){ if(!fb) throw e; st = []; }
+  if(st.length || !fb) return st.filter(p=>p.oid !== exceptOid);
   return (await fallbackQuery(fb, env.join(","), "esriGeometryEnvelope", 14000)).filter(p=>p.oid !== exceptOid);
 }
 async function fetchNeighborsTx(env, exceptOid){
