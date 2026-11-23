@@ -26,7 +26,10 @@ const CONFIG = {
   vicinity: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/export",
   ercotPlanning: "https://www.ercot.com/gridinfo/planning",
   puctLargeLoad: "https://ftp.puc.texas.gov/public/puct-info/agency/rulesnlaws/subrules/electric/25.194/25.194.pdf",
-  roads: ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"],
+  // public road centerlines: TxDOT's statewide roadway inventory (on-system highways plus county roads and city streets),
+  // with OpenStreetMap as a one-shot fallback when TxDOT doesn't answer
+  roadsTx: "https://services.arcgis.com/KTcxiTD9dsQw4r7Z/arcgis/rest/services/TxDOT_Roadways/FeatureServer/0",
+  roads: ["https://overpass-api.de/api/interpreter"],
   powerRadiusMi: 2
 };
 
@@ -55,17 +58,28 @@ const sig2 = n => { if(!n) return 0; const p = Math.pow(10, Math.floor(Math.log1
 const ac = sqft => sqft / SQFT_AC;
 const acTxt = a => a >= 100 ? fmt(a,0) : a >= 10 ? fmt(a,1) : fmt(a,2);
 const today = () => new Date().toLocaleDateString("en-US", {month:"short", day:"numeric", year:"numeric"});
-function safeReplace(a,b,u){ try { history.replaceState(a,b,u); } catch(e){} }
+function safeReplace(a,b,u){ if(DRY && u && !/[?&]dry=1/.test(u)) u += (u.includes("?") ? "&" : "?") + "dry=1"; try { history.replaceState(a,b,u); } catch(e){} }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const nul = v => (v == null || v === "Null" || v === "") ? null : v;
 
-async function getJSON(url, opt={}, ms=15000){
+/* Public answers are cached in this browser for a week, so a repeat screen, a short-list reopen or a bulk rerun is instant
+   and reads the same data. Failures are never cached. */
+const CACHE_NAME = "asc-screen-v1", CACHE_TTL = 7*864e5;
+const hashKey = str => { let a = 0x811c9dc5, b = 5381; for(let i=0;i<str.length;i++){ const c = str.charCodeAt(i); a = Math.imul(a ^ c, 16777619); b = (Math.imul(b, 33) + c) | 0; } return (a>>>0).toString(16) + (b>>>0).toString(16); };
+const cacheKey = (url, opt) => opt && opt.body ? "https://cache.asc.invalid/post/" + hashKey(url + "\n" + opt.body) : url;
+async function cacheGet(key){ try { if(!self.caches) return null; const c = await caches.open(CACHE_NAME), r = await c.match(key); if(!r) return null;
+  if(Date.now() - (+r.headers.get("x-at")||0) > CACHE_TTL){ c.delete(key); return null; } return r; } catch(_){ return null; } }
+async function cachePut(key, body, type){ try { if(!self.caches) return; const c = await caches.open(CACHE_NAME); await c.put(key, new Response(body, {headers:{"content-type":type, "x-at":String(Date.now())}})); } catch(_){} }
+async function getJSON(url, opt={}, ms=12000, {cache=true}={}){
+  const key = cacheKey(url, opt);
+  if(cache){ const hit = await cacheGet(key); if(hit){ try { return await hit.json(); } catch(_){} } }
   const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), ms);
   try {
     const r = await fetch(url, {...opt, signal: ctl.signal});
     if(!r.ok) throw new Error("HTTP " + r.status);
-    const j = await r.json();
+    const txt = await r.text(), j = JSON.parse(txt);
     if(j && j.error) throw new Error(j.error.message || "service error");
+    if(cache) cachePut(key, txt, "application/json");
     return j;
   } finally { clearTimeout(t); }
 }
@@ -245,36 +259,39 @@ async function fetchParcelAt(p){
 }
 async function fetchNeighbors(env, exceptOid){
   const j = await getJSON(CONFIG.parcels + "/identify?" + qs({geometry:env.join(","), geometryType:"esriGeometryEnvelope", sr:4326, layers:"all:0", tolerance:0,
-    mapExtent:env.join(","), imageDisplay:"800,800,96", returnGeometry:true, maxAllowableOffset:0.000004, f:"json"}), {}, 20000);
+    mapExtent:env.join(","), imageDisplay:"800,800,96", returnGeometry:true, maxAllowableOffset:0.000004, f:"json"}), {}, 14000);
   const seen = new Set(); return (j.results||[]).map(normParcel).filter(p => { if(p.oid === exceptOid || !p.ringsLL.length || seen.has(p.oid)) return false; seen.add(p.oid); return true; });
 }
 async function fetchFlood(envLL, ptLL){
   const base = CONFIG.fema + "/query?";
-  const pt = await getJSON(base + qs({geometry:ptLL.join(","), geometryType:"esriGeometryPoint", inSR:4326, spatialRel:"esriSpatialRelIntersects", outFields:"FLD_ZONE,ZONE_SUBTY,SFHA_TF,STATIC_BFE,DFIRM_ID", returnGeometry:false, f:"json"}));
-  const g = await getJSON(base + qs({geometry:envLL.join(","), geometryType:"esriGeometryEnvelope", inSR:4326, spatialRel:"esriSpatialRelIntersects", outFields:"FLD_ZONE,ZONE_SUBTY,SFHA_TF",
-    returnGeometry:true, outSR:4326, geometryPrecision:6, maxAllowableOffset:0.000005, f:"json"}), {}, 25000);
+  const firmP = getJSON(CONFIG.fema.replace(/\/\d+$/,"/3") + "/query?" + qs({geometry:ptLL.join(","), geometryType:"esriGeometryPoint", inSR:4326, spatialRel:"esriSpatialRelIntersects", outFields:"FIRM_PAN,EFF_DATE", returnGeometry:false, f:"json"}), {}, 10000).catch(()=>null);
+  const ptP = getJSON(base + qs({geometry:ptLL.join(","), geometryType:"esriGeometryPoint", inSR:4326, spatialRel:"esriSpatialRelIntersects", outFields:"FLD_ZONE,ZONE_SUBTY,SFHA_TF,STATIC_BFE,DFIRM_ID", returnGeometry:false, f:"json"}));
+  const [pt, g] = await Promise.all([ptP, getJSON(base + qs({geometry:envLL.join(","), geometryType:"esriGeometryEnvelope", inSR:4326, spatialRel:"esriSpatialRelIntersects", outFields:"FLD_ZONE,ZONE_SUBTY,SFHA_TF",
+    returnGeometry:true, outSR:4326, geometryPrecision:6, maxAllowableOffset:0.000005, f:"json"}), {}, 15000)]);
   const feats = (g.features||[]).filter(f=>f.geometry && f.geometry.rings);
   const a = pt.features && pt.features[0] && pt.features[0].attributes;
   // FIRM panel and its effective date (layer 3), best effort: the zone read does not depend on it
-  let firm = null; try { const fp = await getJSON(CONFIG.fema.replace(/\/\d+$/,"/3") + "/query?" + qs({geometry:ptLL.join(","), geometryType:"esriGeometryPoint", inSR:4326, spatialRel:"esriSpatialRelIntersects", outFields:"FIRM_PAN,EFF_DATE", returnGeometry:false, f:"json"}), {}, 12000);
+  let firm = null; try { const fp = await firmP;
     const fa = fp.features && fp.features[0] && fp.features[0].attributes; if(fa) firm = {no:fa.FIRM_PAN||null, effMs:fa.EFF_DATE||null, eff:fa.EFF_DATE ? new Date(fa.EFF_DATE).toLocaleDateString("en-US",{year:"numeric",month:"short",day:"numeric",timeZone:"UTC"}) : null}; } catch(_){}
   return { pointZone: a ? zoneName(a) : null, panel: a && a.DFIRM_ID, firm,
     polys: feats.map(f => ({zone:zoneName(f.attributes), sfha:f.attributes.SFHA_TF==="T", floodway:/FLOODWAY/i.test(f.attributes.ZONE_SUBTY||""), ringsLL:f.geometry.rings})) };
 }
+const floodOut = f => f.sfhaStrip ? "A narrow strip of mapped 1% floodplain touches the tract" : "Outside the mapped 1% annual-chance floodplain";
 function floodFlags(f){ if(!f || f.status!=="ok") return []; const out = [];
-  if((f.zonesOnTract||[]).some(z=>/^V/.test(z))) out.push("Coastal high-hazard area (FEMA V zone) mapped on the tract: wave action, with stricter building rules.");
+  if(f.cover != null && f.cover >= 0.02 && f.cover < 0.95) out.push(`FEMA has no flood map for about ${fmt((1-f.cover)*100,0)}% of the tract. That part is unstudied, not cleared.`);
+  if((f.zonesOnTract||[]).some(z=>/^V/.test(z))) out.push("FEMA V zone (coastal wave hazard) mapped on the tract.");
   const yrsOld = f.firm && f.firm.effMs ? (Date.now() - f.firm.effMs)/3.156e10 : null;
-  if(yrsOld && yrsOld >= 10) out.push(`This FEMA map took effect in ${new Date(f.firm.effMs).getUTCFullYear()}, about ${Math.floor(yrsOld)} years ago. Development and newer studies since then may not be reflected.`);
+  if(yrsOld && yrsOld >= 10) out.push(`FEMA map from ${new Date(f.firm.effMs).getUTCFullYear()}; newer development may not be reflected.`);
   return out; }
 function zoneName(a){ if(!a) return null; if(/FLOODWAY/i.test(a.ZONE_SUBTY||"")) return "AE floodway"; if(/0\.2/.test(a.ZONE_SUBTY||"")) return "X (0.2% annual chance)"; if(a.FLD_ZONE==="X") return "X (minimal)"; return a.FLD_ZONE; }
 async function fetchWetlands(envLL){
   const j = await getJSON(CONFIG.nwi + "/query?" + qs({geometry:envLL.join(","), geometryType:"esriGeometryEnvelope", inSR:4326, spatialRel:"esriSpatialRelIntersects", outFields:"ATTRIBUTE,WETLAND_TYPE",
-    returnGeometry:true, outSR:4326, geometryPrecision:6, maxAllowableOffset:0.000005, resultRecordCount:400, f:"json"}), {}, 20000);
+    returnGeometry:true, outSR:4326, geometryPrecision:6, maxAllowableOffset:0.000005, resultRecordCount:400, f:"json"}), {}, 14000);
   return (j.features||[]).filter(f=>f.geometry&&f.geometry.rings).map(f=>({code:f.attributes.ATTRIBUTE, type:f.attributes.WETLAND_TYPE, ringsLL:f.geometry.rings}));
 }
 async function fetchWater(envLL){
   const j = await getJSON(CONFIG.hydro + "/identify?" + qs({geometry:envLL.join(","), geometryType:"esriGeometryEnvelope", sr:4326, layers:"all", tolerance:0, mapExtent:envLL.join(","),
-    imageDisplay:"800,800,96", returnGeometry:true, maxAllowableOffset:0.000005, f:"json"}), {}, 20000);
+    imageDisplay:"800,800,96", returnGeometry:true, maxAllowableOffset:0.000005, f:"json"}), {}, 14000);
   return (j.results||[]).map(r=>({layer:r.layerId, name:nul(r.attributes.GNIS_Name), paths:r.geometry&&r.geometry.paths, ringsLL:r.geometry&&r.geometry.rings})).filter(w=>w.paths||w.ringsLL);
 }
 async function fetchSoils(ringsLL){
@@ -286,7 +303,7 @@ select P.mukey, mu.musym, mu.muname, sum(P.mupolygongeo.STIntersection(@aoi).STA
  (select top 1 hydgrp from component c where c.mukey=P.mukey and c.majcompflag='Yes' and hydgrp is not null order by comppct_r desc) as hyd,
  (select top 1 drainagecl from component c where c.mukey=P.mukey and c.majcompflag='Yes' and drainagecl is not null order by comppct_r desc) as drn
 from mupolygon P join mapunit mu on mu.mukey=P.mukey where P.mupolygongeo.STIntersects(@aoi)=1 group by P.mukey, mu.musym, mu.muname`;
-  const j = await getJSON(CONFIG.sda, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({format:"JSON+COLUMNNAME", query:q})}, 25000);
+  const j = await getJSON(CONFIG.sda, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({format:"JSON+COLUMNNAME", query:q})}, 15000);
   const rows = (j.Table||[]).slice(1); const tot = rows.reduce((s,r)=>s+(+r[3]||0),0) || 1;
   return rows.map(r=>({sym:r[1], name:r[2], share:(+r[3]||0)/tot, hyd:r[4], drain:r[5]})).sort((a,b)=>b.share-a.share);
 }
@@ -295,8 +312,9 @@ async function fetchTerrain(site){
   const a = site.P.i([x0,y0]), b = site.P.i([x1,y1]), [nx, ny] = degSize(a, b, 128).map(v=>Math.max(24, v));
   const url = CONFIG.dem + "/exportImage?" + qs({bbox:[a[0],a[1],b[0],b[1]].join(","), bboxSR:4326, imageSR:4326, size:nx+","+ny, format:"tiff", pixelType:"F32", noData:-9999,
     interpolation:"RSP_BilinearInterpolation", compression:"None", f:"image"});
-  const ctl = new AbortController(); const t = setTimeout(()=>ctl.abort(), 25000);
-  let buf; try { const r = await fetch(url, {signal:ctl.signal}); if(!r.ok) throw new Error("HTTP "+r.status); buf = await r.arrayBuffer(); } finally { clearTimeout(t); }
+  let buf; const hit = await cacheGet(url); if(hit) buf = await hit.arrayBuffer();
+  if(!buf){ const ctl = new AbortController(); const t = setTimeout(()=>ctl.abort(), 14000);
+    try { const r = await fetch(url, {signal:ctl.signal}); if(!r.ok) throw new Error("HTTP "+r.status); buf = await r.arrayBuffer(); cachePut(url, buf.slice(0), "image/tiff"); } finally { clearTimeout(t); } }
   const tif = parseTiff(buf), z = new Float32Array(tif.W*tif.H);
   let valid = 0; for(let i=0;i<z.length;i++){ const v = tif.data[i]; z[i] = (v < -1000 || v > 9000 || v === 0) ? NaN : v*FT; if(!isNaN(z[i])) valid++; }
   if(valid < z.length*0.5) throw new Error("no elevation coverage here");
@@ -313,22 +331,28 @@ async function fetchLines(c, mi){
   const d = mi*5280/FT/R*180/Math.PI, k = Math.cos(c.lat*Math.PI/180);
   const env = [c.lng-d/k, c.lat-d, c.lng+d/k, c.lat+d];
   const j = await getJSON(CONFIG.lines + "/query?" + qs({geometry:env.join(","), geometryType:"esriGeometryEnvelope", inSR:4326, spatialRel:"esriSpatialRelIntersects", outFields:"VOLTAGE,VOLT_CLASS,STATUS",
-    returnGeometry:true, outSR:4326, geometryPrecision:6, maxAllowableOffset:0.00002, f:"json"}), {}, 20000);
+    returnGeometry:true, outSR:4326, geometryPrecision:6, maxAllowableOffset:0.00002, f:"json"}), {}, 14000);
   return (j.features||[]).filter(f=>f.geometry&&f.geometry.paths).map(f=>({kv:f.attributes.VOLTAGE>0?f.attributes.VOLTAGE:null, cls:f.attributes.VOLT_CLASS, status:f.attributes.STATUS, pathsLL:f.geometry.paths}));
 }
-async function fetchRoads(envLL, n){ // public road centerlines from OpenStreetMap; private and no-access ways left out
+async function fetchRoads(envLL, n){
+  if(!n){ const j = await getJSON(CONFIG.roadsTx + "/query?" + qs({geometry:envLL.join(","), geometryType:"esriGeometryEnvelope", inSR:4326, spatialRel:"esriSpatialRelIntersects",
+      outFields:"RTE_NM,MAP_LBL", returnGeometry:true, outSR:4326, geometryPrecision:6, resultRecordCount:2000, f:"json"}), {}, 9000);
+    const nm = a => { const v = nul(a.MAP_LBL) || nul(a.RTE_NM); return v ? titleCase(String(v)) : null; };
+    const out = []; for(const f of (j.features||[])) if(f.geometry && f.geometry.paths) for(const p of f.geometry.paths) if(p.length > 1) out.push({name:nm(f.attributes||{}), pathLL:p});
+    out.src = "TxDOT"; return out; }
+  // fallback: OpenStreetMap, private and no-access ways left out
   const [w,s0,e,nn] = envLL, q = `[out:json][timeout:20];way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|road|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)$"]["access"!~"^(private|no)$"](${s0},${w},${nn},${e});out geom tags;`;
-  const url = CONFIG.roads[(n||0) % CONFIG.roads.length] + "?data=" + encodeURIComponent(q);
-  const j = await getJSON(url, {}, 22000);
-  return (j.elements||[]).filter(x=>x.geometry && x.geometry.length>1).map(x=>({name:x.tags && (x.tags.name || x.tags.ref) || null, kind:x.tags && x.tags.highway, pathLL:x.geometry.map(g=>[g.lon,g.lat])})); }
+  const j = await getJSON(CONFIG.roads[0] + "?data=" + encodeURIComponent(q), {}, 9000);
+  const out = (j.elements||[]).filter(x=>x.geometry && x.geometry.length>1).map(x=>({name:x.tags && (x.tags.name || x.tags.ref) || null, pathLL:x.geometry.map(g=>[g.lon,g.lat])}));
+  out.src = "OpenStreetMap"; return out; }
 const ROAD_TOUCH_FT = 100; // a centerline this close to the tract line usually means the tract fronts the road
 function roadStats(s, roads){ let best = null;
   for(const r of roads){ const d = lineToTract(s, r.path); if(!best || d < best.d) best = {d, name:r.name, kind:r.kind}; }
   const touching = roads.filter(r=>lineToTract(s, r.path) <= ROAD_TOUCH_FT);
-  return {roads, touches:touching.length>0, names:[...new Set(touching.map(r=>r.name).filter(Boolean))].slice(0,3), nearest:best}; }
+  return {roads, src:roads.src || "TxDOT", touches:touching.length>0, names:[...new Set(touching.map(r=>r.name).filter(Boolean))].slice(0,3), nearest:best}; }
 function roadText(r, short){ if(r.touches) return short ? "Yes" + (r.names.length ? ` (${r.names[0]})` : "") : `A mapped public road runs along or into the tract${r.names.length?` (${r.names.join(", ")})`:""}`;
-  const near = r.nearest ? (r.nearest.d < 1320 ? `about ${fmt(sig2(r.nearest.d),0)} ft` : `about ${fmt(r.nearest.d/5280,1)} mi`) : null;
-  return short ? "No" + (near ? ` (${near})` : "") : `No mapped public road touches the tract${near?`; the nearest is ${near} away${r.nearest.name?` (${r.nearest.name})`:""}`:""}. It may be landlocked or reached by an easement`; }
+  const near = r.nearest && r.nearest.d <= 2640 ? (r.nearest.d < 1320 ? `about ${fmt(sig2(r.nearest.d),0)} ft` : `about ${fmt(r.nearest.d/5280,1)} mi`) : null;
+  return short ? "No" + (near ? ` (${near})` : "") : `No mapped public road touches the tract${near?`; the nearest is ${near} away${r.nearest.name?` (${r.nearest.name})`:""}`:" within about a quarter mile"}. It may be landlocked`; }
 async function fetchCity(p){
   const d = 0.01, ext=[p.lng-d,p.lat-d,p.lng+d,p.lat+d].join(",");
   const j = await getJSON(CONFIG.cities + "/identify?" + qs({geometry:p.lng+","+p.lat, geometryType:"esriGeometryPoint", sr:4326, layers:"all", tolerance:0, mapExtent:ext, imageDisplay:"400,400,96", returnGeometry:false, f:"json"}));
@@ -381,7 +405,7 @@ const SAMPLES = [
 
 /* ===== State ===== */
 let current = null, VIEW = "sheet", SKETCH = null, LIST = loadList();
-const LAYERS = [["ghost","Faded aerial","#b9c3ca"],["aerial","Full aerial","#8a9aa5"],["contours","Lidar contours","#9a6b3c"],["flood","FEMA flood","#3a74b0"],["wet","Wetlands (NWI)","#2f8a6a"],["water","Streams","#3a9bd0"],["road","Roads (OSM)","#8c99a3"],["adj","Neighbors","#7c8790"],["power","Transmission","#c27a10"]];
+const LAYERS = [["ghost","Faded aerial","#b9c3ca"],["aerial","Full aerial","#8a9aa5"],["contours","Lidar contours","#9a6b3c"],["flood","FEMA flood","#3a74b0"],["wet","Wetlands (NWI)","#2f8a6a"],["water","Streams","#3a9bd0"],["road","Roads","#8c99a3"],["adj","Neighbors","#7c8790"],["power","Transmission","#c27a10"]];
 const LAYER_ON = {ghost:true, aerial:false, contours:true, flood:true, wet:true, water:true, road:true, adj:true, power:true};
 
 /* ===== Build a site object ===== */
@@ -418,10 +442,13 @@ function synthGrid(s, fn){ const [x0,y0,x1,y1]=s.frame, nx=96, ny=Math.round(96*
 /* ===== Derived figures (all approximate) ===== */
 function floodStats(s, polys){
   const sf = polys.filter(p=>p.sfha), fw = polys.filter(p=>p.floodway);
-  const inSF = tractShare(s, (x,y)=>sf.some(p=>inRings(x,y,p.rings)));
+  const sfTest = (x,y)=>sf.some(p=>inRings(x,y,p.rings)), touchSF = sf.some(p=>touchesTract(s, p.rings));
+  let inSF = tractShare(s, sfTest);
+  if(touchSF && inSF <= 0.005) inSF = Math.max(inSF, tractShare(s, sfTest, 300)); // a narrow strip can slip between coarse samples
+  const cover = polys.length ? tractShare(s, (x,y)=>polys.some(p=>inRings(x,y,p.rings))) : 0;
   const inFW = fw.length ? tractShare(s, (x,y)=>fw.some(p=>inRings(x,y,p.rings))) : 0;
   const zones = [...new Set(polys.filter(p=>touchesTract(s, p.rings)).map(p=>p.zone))];
-  return {shareSFHA:inSF, shareFloodway:inFW, zonesOnTract:zones};
+  return {shareSFHA:inSF, shareFloodway:inFW, zonesOnTract:zones, sfhaStrip: touchSF && inSF <= 0.005, cover};
 }
 function wetStats(s, polys){
   const share = polys.length ? tractShare(s, (x,y)=>polys.some(p=>inRings(x,y,p.rings))) : 0;
@@ -465,7 +492,7 @@ function terrainStats(s, g){
   return { ok:true, min:mn, max:mx, relief:mx-mn, meanSlope:mean, p90:slopes.length?slopes[Math.floor(slopes.length*.9)]:null, over5:over(5), over10:over(10),
     planeSlope:Math.hypot(a,b)*100, fallDir:(Math.hypot(a,b)>0.0015 ? compass(-a,-b) : null), lowSide: lo ? compass(lo[0]-cx, lo[1]-cy) : null, balanceCY:cutCY, cellFt:Math.round((g.dx+g.dy)/2) };
 }
-function lineDistText(d, short){ if(d <= 60) return short ? "Crosses or touches the tract" : "A mapped transmission line crosses or touches this tract";
+function lineDistText(d, short){ if(d <= 60) return short ? "Crosses the tract" : "A mapped transmission line crosses this tract";
   if(d < 1320) return short ? `About ${fmt(sig2(d),0)} ft away` : `Nearest mapped transmission line about ${fmt(sig2(d),0)} ft from the tract`;
   return short ? `About ${fmt(d/5280,1)} mi away` : `Nearest mapped transmission line about ${fmt(d/5280,1)} mi from the tract`; }
 function powerStats(s, lines){
@@ -477,7 +504,7 @@ function powerStats(s, lines){
 }
 
 /* ===== Run a screen ===== */
-const STEPS = [["parcel","Appraisal parcel"],["flood","FEMA floodplain"],["wet","Wetlands (NWI)"],["water","Mapped streams"],["soils","Soils (SSURGO)"],["terrain","Terrain (USGS lidar)"],["power","Transmission lines"],["juris","Jurisdiction"],["road","Road frontage (OSM)"]];
+const STEPS = [["parcel","Appraisal parcel"],["flood","FEMA floodplain"],["wet","Wetlands (NWI)"],["water","Mapped streams"],["soils","Soils (SSURGO)"],["terrain","Terrain (USGS lidar)"],["power","Transmission lines"],["juris","Jurisdiction"],["road","Road frontage"]];
 async function runLive(raw, opts={}){
   const p = await parseLocation(raw);
   if(!inTexas(p)) throw Object.assign(new Error("That point is outside Texas. This screen covers Texas land only."), {outside:true});
@@ -509,9 +536,9 @@ function acreage(s){
   if(s.parent) rows.push(["Parent parcel, drawn (GIS)", s.parent.acres]);
   let gap = null;
   if(feed){ const d = Math.abs(s.acres-feed), r = d/Math.max(s.acres, feed);
-    if(feed > s.acres*1.5) gap = `The appraisal account lists about ${acTxt(feed)} acres, more than this ${acTxt(s.acres)}-acre outline. The account may include other tracts. Figures on this screen apply to the outline only.`;
-    else if(s.acres > feed*1.5) gap = `This outline draws about ${acTxt(s.acres)} acres, more than the ${acTxt(feed)} acres on the roll. Confirm which figure fits the tract you mean.`;
-    else if(r > 0.03 && d >= 0.1) gap = `The figures differ by about ${fmt(r*100,0)}% (${acTxt(d)} ac). Confirm acreage from the deed or a survey before scoping work.`; }
+    if(feed > s.acres*1.5) gap = `The roll lists about ${acTxt(feed)} acres for this account, so it may include other tracts. Findings here cover the ${acTxt(s.acres)}-acre outline.`;
+    else if(s.acres > feed*1.5) gap = `The outline draws about ${acTxt(s.acres)} acres against ${acTxt(feed)} on the roll.`;
+    else if(r > 0.03 && d >= 0.1) gap = `The sources differ by about ${fmt(r*100,0)}% (${acTxt(d)} ac).`; }
   return {rows, gap}; }
 const acreLine = s => { const a = acreage(s); return a.rows.map(([l,v])=>`${l}: ${acTxt(v)} ac`).join(" · ") + (a.rows.length ? ` · ${s.county ? titleCase(s.county)+" County" : "County"} appraisal district record: not read by this screen` : ""); };
 
@@ -531,21 +558,29 @@ function siteFromSketch(ringFt, base){
 const yrs = (a,b) => { const y1 = a ? new Date(a).getUTCFullYear() : null, y2 = new Date(b).getUTCFullYear(); return y1 && y1 !== y2 ? y1 + "–" + y2 : String(y2); };
 const titleCase = t => String(t||"").toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());
 
+const JOB_BUDGET = 18000;
+const withTimeout = (p, ms) => Promise.race([p, new Promise((_,rej)=>setTimeout(()=>rej(new Error("out of time")), ms))]);
+let REFRESH_T = 0;
+function refreshAfterLayer(s){ clearTimeout(REFRESH_T); REFRESH_T = setTimeout(()=>{ if(s !== current) return; renderBrief(s); renderMatch(s); renderStatus(s); if(s.pin) renderListBtn(s); }, 120); }
 async function screenLayers(s, only){
   const L = s.layers, ringsLL = s.rings.map(r=>r.map(s.P.i));
   const [x0,y0,x1,y1] = s.frame, a = s.P.i([x0,y0]), b = s.P.i([x1,y1]), env = [a[0],a[1],b[0],b[1]];
   const c = s.center, toFt = rr => rr.map(r=>r.map(s.P.f));
-  const job = async (key, fn) => { if(only && !only.includes(key)) return; setStatus(key,"wait"); L[key] = {status:"wait"}; renderReadout(s);
-    for(let n = 0; ; n++){ try { const r = await fn(n); L[key] = {...r, status:r._status||"ok"}; break; }
-      catch(e){ const msg = String(e.message||e), final = /no elevation cells/.test(msg);
-        if(final || n >= 2 || s !== current){ L[key] = {status:"fail", err:msg}; break; }
-        await new Promise(r=>setTimeout(r, 800 * 2**n + Math.random()*500)); } }
-    if(s !== current) return; setStatus(key, L[key].status==="none" ? "na" : L[key].status); renderReadout(s); drawSheet(s); renderInsights(s); if(key==="adj") renderMatch(s); };
+  // each layer gets a fixed time budget: one quick retry, then "Not read this time". A slow layer never holds up the rest.
+  const job = async (key, fn) => { if(only && !only.includes(key)) return; setStatus(key,"wait"); L[key] = {status:"wait"}; renderReadout(s); const t0 = performance.now();
+    for(let n = 0; ; n++){ try { const left = JOB_BUDGET - (performance.now()-t0); if(left < 1200) throw new Error("out of time");
+        const r = await withTimeout(fn(n), left); L[key] = {...r, status:r._status||"ok"}; break; }
+      catch(e){ const msg = String(e.message||e), final = /no elevation cells|out of time/.test(msg);
+        if(final || n >= 1 || s !== current || performance.now()-t0 > JOB_BUDGET-2500){ L[key] = {status:"fail", err:msg}; break; }
+        await sleep(400 + Math.random()*300); } }
+    if(s !== current) return; setStatus(key, L[key].status==="none" ? "na" : L[key].status); renderReadout(s); drawSheet(s); renderInsights(s); if(key==="adj") renderMatch(s);
+    if(s._settled) refreshAfterLayer(s); };
   const tasks = [
     job("flood", async()=>{ const f = await fetchFlood(env, [c.lng,c.lat]); const polys = f.polys.map(p=>({...p, rings:toFt(p.ringsLL)}));
       // an empty answer means no FEMA map here, which is not the same as outside the floodplain
-      if(!polys.length && !f.pointZone) return {_status:"none", polys:[], noneText:"FEMA returned no flood map for this area. Unmapped is not the same as outside the floodplain.", firm:f.firm};
-      return {polys, pointZone:f.pointZone, panel:f.panel, firm:f.firm, ...floodStats(s, polys)}; }),
+      const fs = polys.length ? floodStats(s, polys) : null;
+      if((!polys.length || fs.cover < 0.02) && !f.pointZone) return {_status:"none", polys:[], noneText:"No FEMA flood map covers this area (unmapped, not cleared)", firm:f.firm};
+      return {polys, pointZone:f.pointZone, panel:f.panel, firm:f.firm, ...fs}; }),
     job("wet", async()=>{ const w = await fetchWetlands(env); const polys = w.map(p=>({...p, rings:toFt(p.ringsLL)})); return {polys, ...wetStats(s, polys)}; }),
     job("water", async()=>{ const w = await fetchWater(env); const items = w.map(i=>({name:i.name, paths:i.paths?toFt(i.paths):null, rings:i.ringsLL?toFt(i.ringsLL):null}));
       return waterStats(s, items); }),
@@ -553,7 +588,8 @@ async function screenLayers(s, only){
     job("terrain", async()=>{ const g = await fetchTerrain(s); const st = terrainStats(s, g); if(!st.ok) throw new Error("no elevation cells on the tract"); return {grid:g, ...st}; }),
     job("power", async()=>{ s.powerMi = (TYPE==="dc" || s.acres >= 40) ? 5 : CONFIG.powerRadiusMi; const lines = (await fetchLines(c, s.powerMi)).map(l=>({kv:l.kv, status:l.status, paths:toFt(l.pathsLL)})); return powerStats(s, lines); }),
     job("juris", async()=>fetchCity(c)),
-    job("road", async(n)=>{ const r = await fetchRoads(env, n); return roadStats(s, r.map(x=>({...x, path:x.pathLL.map(s.P.f)}))); }),
+    job("road", async(n)=>{ const [bx0,by0,bx1,by1] = bbox(s.rings), rp = 1320, ra = s.P.i([bx0-rp,by0-rp]), rb = s.P.i([bx1+rp,by1+rp]);
+      const r = await fetchRoads([Math.min(ra[0],rb[0]), Math.min(ra[1],rb[1]), Math.max(ra[0],rb[0]), Math.max(ra[1],rb[1])], n); const rr = r.map(x=>({...x, path:x.pathLL.map(s.P.f)})); rr.src = r.src; return roadStats(s, rr); }),
     job("adj", async()=>{ if(s.sketch) return {items:[]}; const pad = 0.15, w = b[0]-a[0], h = b[1]-a[1];
       const nb = await fetchNeighbors([a[0]+w*pad, a[1]+h*pad, b[0]-w*pad, b[1]-h*pad], s.oid);
       const ids = new Set(s.parcels.map(p=>p.oid));
@@ -564,7 +600,7 @@ async function screenLayers(s, only){
 
 /* ===== Status / readout ===== */
 function stateOf(s, key){ if(key==="parcel") return "ok"; const l = s.layers[key]; return !l ? "wait" : l.status==="ok" ? "ok" : l.status==="wait" ? "wait" : l.status==="na" || l.status==="none" ? "off" : "na"; }
-const RO_META = {parcel:["pen","TxGIO StratMap","#ff6a5e"],flood:["wave","FEMA NFHL","#5ab0ff"],wet:["drop","USFWS NWI","#5fd3a8"],water:["drop","USGS NHD","#4fb6e8"],soils:["layers","NRCS SSURGO","#c9a36b"],terrain:["contour","USGS 3DEP","#e0a33b"],power:["bolt","HIFLD","#f0b35a"],juris:["sheet","TxGIO","#b9a7ff"],road:["road","OpenStreetMap","#9fb3c2"]};
+const RO_META = {parcel:["pen","TxGIO StratMap","#ff6a5e"],flood:["wave","FEMA NFHL","#5ab0ff"],wet:["drop","USFWS NWI","#5fd3a8"],water:["drop","USGS NHD","#4fb6e8"],soils:["layers","NRCS SSURGO","#c9a36b"],terrain:["contour","USGS 3DEP","#e0a33b"],power:["bolt","HIFLD","#f0b35a"],juris:["sheet","TxGIO","#b9a7ff"],road:["road","TxDOT roads","#9fb3c2"]};
 let RO_S = null; const RO_PREV = {};
 function roMeter(k){ const s = RO_S; if(!s) return null; const L = s.layers, ok = x => L[x] && L[x].status==="ok";
   if(k==="flood" && ok("flood")) return {v:L.flood.shareSFHA, lab:`${fmt(L.flood.shareSFHA*100,0)}% in mapped 1%`};
@@ -592,7 +628,7 @@ function roThumb(k, st){
   if(ok && k==="terrain" && L.terrain.grid){ const g = L.terrain.grid, fr = frameRelief(g), iv = [1,2,5,10,20,50,100].find(v => fr/v <= 9) || 100;
     const d = contourSegs(g, iv).map(q=>`M${X(q[0]).toFixed(1)} ${Y(q[1]).toFixed(1)}L${X(q[2]).toFixed(1)} ${Y(q[3]).toFixed(1)}`).join(""); o.push(`<path d="${d}" stroke="${c}" stroke-width=".7" fill="none" opacity=".9"/>`); }
   if(ok && k==="soils") tractFill = `url(#${id}h)`;
-  if(ok && k==="flood" && L.flood.shareSFHA <= 0.005) tractFill = "rgba(67,194,138,.18)";
+  if(ok && k==="flood" && L.flood.shareSFHA <= 0.005 && !L.flood.sfhaStrip) tractFill = "rgba(67,194,138,.18)";
   o.push(`<path d="${P(s.rings)}" fill="${k==="parcel"?"rgba(208,49,45,.28)":tractFill}" fill-rule="evenodd" stroke="#fff" stroke-width="1.3" stroke-linejoin="round"/>`);
   if(k==="parcel") for(const r of s.rings) for(const q of r.slice(0,-1).slice(0,40)) o.push(`<circle cx="${X(q[0]).toFixed(1)}" cy="${Y(q[1]).toFixed(1)}" r="1.3" fill="#ff8a7f"/>`);
   if(k==="juris" && ok){ const nm = (L.juris.name || "ETJ").replace(/^city of /i,"").slice(0,4).toUpperCase(); o.push(`<rect x="3" y="3" width="${N-6}" height="${N-6}" rx="6" fill="none" stroke="${c}" stroke-dasharray="3 2" opacity=".8"/><text x="${N/2}" y="${N-6}" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="7" fill="${c}">${esc(nm)}</text>`); }
@@ -603,31 +639,36 @@ function roThumb(k, st){
 function readoutRow(k, label, value, sub, st){
   const [ico, src, c] = RO_META[k] || ["sheet","",""], m = roMeter(k), sig = value + "|" + st, fresh = RO_PREV[k] !== undefined && RO_PREV[k] !== sig && st==="ok"; RO_PREV[k] = sig;
   return `<li class="ro ${st}${fresh?" fresh":""}" style="--c:${c}"><span class="ro-ico" aria-hidden="true">${roThumb(k, st) || `<svg viewBox="0 0 24 24">${WF_ICO[ico]}</svg>`}<span class="st ${st}"></span></span><div class="ro-body"><div class="ro-k">${esc(label)}<span class="ro-src">${esc(src)}</span></div><div class="ro-v">${value}</div>${m?`<div class="ro-m" title="${esc(m.lab)}"><i style="width:${Math.max(2,Math.round(m.v*100))}%"></i></div>`:""}${sub?`<div class="ro-s">${sub}</div>`:""}</div></li>`; }
-function failText(l){ return !l || l.status==="wait" ? "Still loading…" : l.status==="none" ? (l.noneText || "Nothing mapped here.") : l.status==="fail" ? "Not available. The public service didn't answer, so this layer is left off. Nothing was assumed." : ""; }
-async function retryMissing(){ const s = current; if(!s) return; const keys = STEPS.map(x=>x[0]).filter(k=>k!=="parcel" && s.layers[k] && s.layers[k].status==="fail");
+function failText(l){ return !l || l.status==="wait" ? "Loading…" : l.status==="none" ? (l.noneText || "Nothing mapped here.") : l.status==="fail" ? "Not read this time" : ""; }
+async function retryMissing(only){ const s = current; if(!s) return; const keys = typeof only === "string" ? [only] : STEPS.map(x=>x[0]).filter(k=>k!=="parcel" && s.layers[k] && s.layers[k].status==="fail");
   if(s.layers.adj && s.layers.adj.status==="fail") keys.push("adj"); if(!keys.length) return; toast("Asking the public services again…");
-  await screenLayers(s, keys); if(s===current){ renderBrief(s); renderReadout(s); renderInsights(s); } }
-function renderRetry(s){ const b = $("#retryBox"); if(!b) return; const miss = STEPS.filter(([k])=>k!=="parcel" && s.layers[k] && s.layers[k].status==="fail");
+  await screenLayers(s, keys); if(s===current){ renderBrief(s); renderReadout(s); renderInsights(s); renderMatch(s); renderStatus(s); } }
+function renderRetry(s){ const b = $("#retryBox"); if(!b) return; b.hidden = true; return; const miss = STEPS.filter(([k])=>k!=="parcel" && s.layers[k] && s.layers[k].status==="fail");
   b.hidden = !miss.length || s.sample; if(miss.length) $("#retryTxt").textContent = `${miss.length===1?"One public service":miss.length+" public services"} didn't answer: ${miss.map(x=>x[1]).join(", ")}.`; }
+/* a pin with no parcel describes the ground around the pin, never "the tract" */
+function pinWords(s, t){ if(!s || !s.pin || !t) return t;
+  return String(t).replace(/crosses this tract|crosses the tract/gi, "runs near this pin").replace(/(touches|on|into|of) (this|the) tract/gi, (m, w) => w.toLowerCase()==="of" ? "of the area near this pin" : "near this pin")
+    .replace(/from the tract/gi, "from this pin").replace(/(this|the) tract/gi, "this pin's area").replace(/runs along or near this pin/gi, "runs near this pin"); }
 function renderReadout(s){
-  RO_S = s; renderRetry(s); const L = s.layers, rows = [];
-  const parcelSub = s.sample ? "Illustrative sample, not a real parcel" : s.pin ? `Layers are read for ${PIN_R} ft around your pin. Pick a parcel or sketch the tract for a full screen.` : s.sketch ? (s.parent ? `Your outline, part of appraisal parcel ${esc(s.parent.propId||"")}` : "Your sketched outline") : `Appraisal record ${s.propId?("#"+esc(s.propId)):""} &middot; ${esc(titleCase(s.source||""))}${s.taxYear?(" "+esc(s.taxYear)):""}`;
-  rows.push(readoutRow("parcel", s.pin ? "No parcel matched" : s.added.length ? "Assemblage" : "Parcel", s.pin ? "Partial screen around the pin" : `${acTxt(s.acres)} acres <span class="opt">(drawn, approx.)</span>`, parcelSub + (acreage(s).rows.length > 1 ? " &middot; " + esc(acreage(s).rows.slice(1).map(([l,v])=>`${l.replace(/ \(.*\)$/,"")}: ${acTxt(v)} ac`).join(" · ")) : "") + (acreage(s).gap ? `<span class="ro-gap">${esc(acreage(s).gap)}</span>` : ""), s.pin ? "off" : "ok"));
-  const f = L.flood; rows.push(readoutRow("flood","FEMA floodplain", f && f.status==="ok" ? (f.shareSFHA>0.005 ? `About ${fmt(f.shareSFHA*100,0)}% in the mapped 1% annual-chance floodplain` : "Outside the mapped 1% annual-chance floodplain") : esc(failText(f)),
-    f && f.status==="ok" ? (f.shareSFHA>0.005 ? `Approximately ${fmt((1-f.shareSFHA)*100,0)}% of the tract is outside mapped floodplain${f.shareFloodway>0.005?`; about ${fmt(f.shareFloodway*100,0)}% in mapped floodway`:""}. ` : "") + "From an aligned FEMA map overlay, not an elevation survey." + (f.firm && f.firm.eff && !s.sample ? ` FEMA map effective ${f.firm.eff}.` : "") + floodFlags(f).map(x=>`<span class="ro-gap">${esc(x)}</span>`).join("") : "", stateOf(s,"flood")));
-  const w = L.wet; rows.push(readoutRow("wet","Wetlands (NWI)", w && w.status==="ok" ? (w.share>0.002 ? `About ${fmt(w.share*100,1)}% mapped as wetland or water` : w.nearby ? "None mapped on the tract; some nearby" : "None mapped on or near the tract") : esc(failText(w)),
-    w && w.status==="ok" && w.typesOnTract.length ? esc(w.typesOnTract.join(", ")) + ". A mapped indicator, not a delineation." : w && w.status==="ok" ? "A mapped indicator, not a delineation." : "", stateOf(s,"wet")));
-  const wa = L.water; rows.push(readoutRow("water","Streams and water bodies", wa && wa.status==="ok" ? esc(waterText({...wa, names:[]})) : esc(failText(wa)), wa && wa.status==="ok" && wa.names && wa.names.length ? esc(wa.names.slice(0,2).join(", ")) : "", stateOf(s,"water")));
-  const so = L.soils; rows.push(readoutRow("soils","Soils (SSURGO)", so && so.status==="ok" ? (so.units.length ? esc(mainSoil(so.units)) : "No soil map units returned") : esc(failText(so)),
-    so && so.status==="ok" && so.units.length ? `${so.units.length} map unit${so.units.length>1?"s":""}. Hydrologic group ${esc(so.units[0].hyd||"n/a")}. A screening hint, not a geotechnical report.` : "", stateOf(s,"soils")));
-  const t = L.terrain; rows.push(readoutRow("terrain","Terrain (public lidar)", t && t.status==="ok" ? `${fmt(t.relief,0)} ft of relief, average slope ~${fmt(t.meanSlope,1)}%` : esc(failText(t)),
-    t && t.status==="ok" ? `${t.fallDir ? "Ground generally falls toward the " + t.fallDir + ". " : "Nearly level overall. "}Approximate, from USGS 3DEP. Not a design topo.` : "", stateOf(s,"terrain")));
-  const pw = L.power; rows.push(readoutRow("power","Transmission lines", pw && pw.status==="ok" ? (pw.nearest ? lineDistText(pw.nearest.d) : `None mapped within ${s.powerMi||CONFIG.powerRadiusMi} miles`) : esc(failText(pw)),
-    pw && pw.status==="ok" && pw.nearest ? `${pw.nearest.kv ? fmt(pw.nearest.kv,0)+" kV class. " : ""}Proximity only. Says nothing about available capacity.` : pw && pw.status==="ok" ? "Proximity only." : "", stateOf(s,"power")));
-  const j = L.juris; rows.push(readoutRow("juris","Jurisdiction", j && j.status==="ok" ? (j.text ? esc(j.text) : j.name ? "City of " + esc(j.name) : "Outside mapped city limits") : esc(failText(j)),
-    j && j.status==="ok" ? (j.name ? "Zoning is set by the city. This is a mapped limit, not a zoning finding." : "Could still sit in a city's ETJ, which controls platting. Check with the county and nearby cities.") : "", stateOf(s,"juris")));
-  const rd = L.road; rows.push(readoutRow("road","Road frontage", rd && rd.status==="ok" ? esc(roadText(rd)) : esc(failText(rd)),
-    rd && rd.status==="ok" ? "From OpenStreetMap road lines. A mapped road is not legal access; frontage, right-of-way and easements are confirmed by title and survey." : "", stateOf(s,"road")));
+  RO_S = s; const L = s.layers, rows = [], P = t => pinWords(s, t), row = (k, label, v, sub, st) => rows.push(readoutRow(k, label, P(v), P(sub), st));
+  const val = (k, okText) => { const l = L[k]; return l && l.status==="ok" ? okText(l) : esc(failText(l)); };
+  const subFail = k => L[k] && L[k].status==="fail" && !s.sample ? `<button type="button" class="linkbtn small" data-retry="${k}">Retry</button>` : "";
+  const parcelSub = s.sample ? "Illustrative sample, not a real parcel" : s.pin ? "Pick a nearby parcel or outline your tract for a full screen." : s.sketch ? (s.parent ? `Your outline, part of appraisal parcel ${esc(s.parent.propId||"")}` : "Your outline") : `Appraisal ID ${esc(s.propId||"–")} &middot; ${esc(titleCase(s.source||""))}${s.taxYear?(" "+esc(s.taxYear)):""}`;
+  row("parcel", s.pin ? "Near this pin" : s.added.length ? "Assemblage" : "Parcel", s.pin ? `No parcel at the pin; layers read for ${PIN_R} ft around it` : `${acTxt(s.acres)} acres <span class="opt">(drawn, approx.)</span>`, parcelSub, s.pin ? "off" : "ok");
+  const f = L.flood; row("flood","FEMA floodplain", val("flood", f => f.shareSFHA>0.005 ? `About ${fmt(f.shareSFHA*100,0)}% in the mapped 1% annual-chance floodplain <span class="opt">(approx.)</span>` : floodOut(f)),
+    f && f.status==="ok" ? [f.shareFloodway>0.005 ? `About ${fmt(f.shareFloodway*100,0)}% in mapped floodway.` : "", f.firm && f.firm.eff && !s.sample ? `Map effective ${f.firm.eff}.` : ""].filter(Boolean).join(" ") + floodFlags(f).map(x=>`<span class="ro-gap">${esc(x)}</span>`).join("") : subFail("flood"), stateOf(s,"flood"));
+  row("wet","Wetlands (NWI)", val("wet", w => w.share>0.002 ? `About ${fmt(w.share*100,1)}% mapped as wetland or water` : w.nearby ? "None mapped on the tract; some nearby" : "None mapped on or near the tract"),
+    L.wet && L.wet.status==="ok" ? esc(L.wet.typesOnTract.join(", ")) : subFail("wet"), stateOf(s,"wet"));
+  row("water","Streams and water bodies", val("water", wa => esc(waterText({...wa, names:[]}))), L.water && L.water.status==="ok" ? esc((L.water.names||[]).slice(0,2).join(", ")) : subFail("water"), stateOf(s,"water"));
+  row("soils","Soils (SSURGO)", val("soils", so => so.units.length ? esc(mainSoil(so.units)) : "No soil map units returned"),
+    L.soils && L.soils.status==="ok" && L.soils.units.length ? `Hydrologic group ${esc(L.soils.units[0].hyd||"n/a")}${L.soils.units[0].drain?" · "+esc(L.soils.units[0].drain.toLowerCase()):""}` : subFail("soils"), stateOf(s,"soils"));
+  row("terrain","Terrain (public lidar)", val("terrain", t => `${fmt(t.relief,0)} ft of relief, average slope ~${fmt(t.meanSlope,1)}%`),
+    L.terrain && L.terrain.status==="ok" ? (L.terrain.fallDir ? "Ground generally falls toward the " + L.terrain.fallDir + "." : "Nearly level overall.") : subFail("terrain"), stateOf(s,"terrain"));
+  row("power","Transmission lines", val("power", pw => pw.nearest ? lineDistText(pw.nearest.d) : `None mapped within ${s.powerMi||CONFIG.powerRadiusMi} miles`),
+    L.power && L.power.status==="ok" ? (L.power.nearest && L.power.nearest.kv ? fmt(L.power.nearest.kv,0)+" kV class" : "") : subFail("power"), stateOf(s,"power"));
+  row("juris","Jurisdiction", val("juris", j => j.text ? esc(j.text) : j.name ? "City of " + esc(j.name) : "Outside mapped city limits"),
+    L.juris && L.juris.status==="ok" ? (L.juris.name ? "" : "A nearby city's ETJ may still control platting.") : subFail("juris"), stateOf(s,"juris"));
+  row("road","Road frontage", val("road", rd => esc(roadText(rd))), L.road && L.road.status==="ok" ? `From ${esc(L.road.src||"TxDOT")} road lines` : subFail("road"), stateOf(s,"road"));
   $("#readout").innerHTML = rows.join("");
   const adjBox = $("#adjBox"), A = L.adj;
   adjBox.hidden = s.sample || s.sketch || s.pin;
@@ -800,8 +841,8 @@ function notesColumn(s, T){
   y += 4; widen();
   head("FLOOD STATEMENT");
   if(f && f.status==="ok"){ const pin = f.shareSFHA, zones = f.zonesOnTract.length ? f.zonesOnTract.join(", ") : "X (minimal)";
-    para(`According to the FEMA National Flood Hazard Layer${f.panel&&!s.sample?` (study ${f.panel}${f.firm&&f.firm.no?`, FIRM panel ${f.firm.no}`:""}${f.firm&&f.firm.eff?`, effective ${f.firm.eff}`:""})`:""}, queried ${today()}, ${pin>0.005?`approximately ${fmt(pin*100,0)}% of this tract lies within the mapped 1% annual-chance floodplain and approximately ${fmt((1-pin)*100,0)}% lies outside mapped floodplain`:`this tract lies outside the mapped 1% annual-chance floodplain`}. Zones touching the tract: ${zones}.${f.shareFloodway>0.005?` About ${fmt(f.shareFloodway*100,0)}% is in mapped floodway.`:""} Percentages are an approximation from an aligned FEMA map overlay, not an on-the-ground elevation survey. This statement does not imply that the property will or will not be free from flooding.`); for(const x of floodFlags(f)) para(x); }
-  else para(f && f.status==="none" ? "FEMA returned no flood map for this area. Unmapped is not the same as outside the floodplain; no flood statement is made." : f && f.status==="fail" ? "The FEMA service did not answer, so no flood statement is made." : "FEMA flood data was still loading when this sheet was drawn; no flood statement is made.");
+    para(`According to the FEMA National Flood Hazard Layer${f.panel&&!s.sample?` (study ${f.panel}${f.firm&&f.firm.no?`, FIRM panel ${f.firm.no}`:""}${f.firm&&f.firm.eff?`, effective ${f.firm.eff}`:""})`:""}, queried ${today()}, ${f.sfhaStrip?"a narrow strip of the mapped 1% annual-chance floodplain touches this tract, covering under 1% of it":pin>0.005?`approximately ${fmt(pin*100,0)}% of this tract lies within the mapped 1% annual-chance floodplain and approximately ${fmt((1-pin)*100,0)}% lies outside mapped floodplain`:`this tract lies outside the mapped 1% annual-chance floodplain`}. Zones touching the tract: ${zones}.${f.shareFloodway>0.005?` About ${fmt(f.shareFloodway*100,0)}% is in mapped floodway.`:""} Percentages are an approximation from an aligned FEMA map overlay, not an on-the-ground elevation survey. This statement does not imply that the property will or will not be free from flooding.`); for(const x of floodFlags(f)) para(x); }
+  else para(f && f.status==="none" ? "FEMA has no flood map for this area. Unmapped is not the same as outside the floodplain; no flood statement is made." : f && f.status==="fail" ? "The FEMA service did not answer, so no flood statement is made." : "FEMA flood data was still loading when this sheet was drawn; no flood statement is made.");
   y += 6; widen();
   head("SITE DATA (APPROXIMATE, PUBLIC SOURCES)");
   const sd = [];
@@ -931,10 +972,10 @@ function powerContextHTML(s){
 const KEYOF = {Parcel:"parcel", Floodplain:"flood", Wetlands:"wet", Streams:"water", Soils:"soils", Terrain:"terrain", Transmission:"power", Jurisdiction:"juris", "Road access":"road"};
 function renderBrief(s){ if(s===current) setTimeout(updRec, 0);
   const L = s.layers, rec = recommend(s), rows = [];
-  const row = (k, finding, limit, src, st) => rows.push(`<tr><td class="k">${k}</td><td>${st==="ok"?finding:`<span class="na">${st==="wait"?"Loading.":st==="none"?"Nothing mapped.":"Not available."}</span> ${esc(failText(L[KEYOF[k]]))}`}<div class="limit">${limit}</div></td><td class="src">${src}</td></tr>`);
+  const row = (k, finding, limit, src, st) => rows.push(`<tr><td class="k">${k}</td><td>${st==="ok"?pinWords(s,finding):`<span class="na">${st==="wait"?"Loading.":st==="none"?"Nothing mapped.":"Not read this time."}</span> ${st==="none"?esc(failText(L[KEYOF[k]])):""}`}<div class="limit">${limit}</div></td><td class="src">${src}</td></tr>`);
   const st = k => L[k] ? L[k].status : "wait";
   row("Parcel", s.pin ? `No appraisal parcel at the pin (${s.center.lat.toFixed(6)}, ${s.center.lng.toFixed(6)}). The layers below were read for ${PIN_R} ft around it; they describe that circle, not a tract.` : `${s.sample?acTxt(s.acres)+" acres (illustrative)":esc(acreLine(s))}.${acreage(s).gap?` <b>${esc(acreage(s).gap)}</b>`:""} ${s.legal?esc(s.legal):""}${s.parent?` Outline is part of appraisal parcel ${esc(s.parent.propId||"")}.`:""}`, "An appraisal map, drawn for taxes. Lines can be off by tens of feet. Not a boundary. Acreage by source; the county appraisal district's own record was not read.", s.sample?"Illustrative sample":esc(s.pin?"TxGIO StratMap Land Parcels (no match)":`TxGIO StratMap Land Parcels, from ${titleCase(s.source||"county appraisal district")}${s.taxYear?", tax year "+s.taxYear:""}`), "ok");
-  const f = L.flood; row("Floodplain", f&&f.status==="ok"?`${f.shareSFHA>0.005?`About ${fmt(f.shareSFHA*100,0)}% inside the mapped 1% annual-chance floodplain; approximately ${fmt((1-f.shareSFHA)*100,0)}% outside mapped floodplain.`:"Outside the mapped 1% annual-chance floodplain."}${f.shareFloodway>0.005?` About ${fmt(f.shareFloodway*100,0)}% in mapped floodway.`:""} Zones touching the tract: ${f.zonesOnTract.length?esc(f.zonesOnTract.join(", ")):"X (minimal)"}.${floodFlags(f).map(x=>` <b>${esc(x)}</b>`).join("")}`:"",
+  const f = L.flood; row("Floodplain", f&&f.status==="ok"?`${f.shareSFHA>0.005?`About ${fmt(f.shareSFHA*100,0)}% inside the mapped 1% annual-chance floodplain; approximately ${fmt((1-f.shareSFHA)*100,0)}% outside mapped floodplain.`:floodOut(f)+"."}${f.shareFloodway>0.005?` About ${fmt(f.shareFloodway*100,0)}% in mapped floodway.`:""} Zones touching the tract: ${f.zonesOnTract.length?esc(f.zonesOnTract.join(", ")):"X (minimal)"}.${floodFlags(f).map(x=>` <b>${esc(x)}</b>`).join("")}`:"",
     "Percentages are an approximation from an aligned FEMA map overlay, not an on-the-ground elevation survey.", s.sample?"Illustrative sample":`FEMA National Flood Hazard Layer, queried ${today()}${f&&f.panel?` (study ${esc(f.panel)})`:""}`, st("flood"));
   const w = L.wet; row("Wetlands", w&&w.status==="ok"?(w.share>0.002?`About ${fmt(w.share*100,1)}% of the tract is mapped as ${esc(w.typesOnTract.join(", ").toLowerCase()||"wetland or water")}.`:w.nearby?"None mapped on the tract. Mapped features nearby are drawn on the sheet.":"None mapped on or near the tract."):"",
     "The National Wetlands Inventory is drawn from aerial imagery. It is not a jurisdictional delineation.", s.sample?"Illustrative sample":"USFWS National Wetlands Inventory", st("wet"));
@@ -949,7 +990,7 @@ function renderBrief(s){ if(s===current) setTimeout(updRec, 0);
     "Proximity from a national public map. It says nothing about available capacity, service, cost or timing.", s.sample?"Illustrative sample":"HIFLD Electric Power Transmission Lines (public dataset, last edited 2023)", st("power"));
   const j = L.juris; row("Jurisdiction", j&&j.status==="ok"?(j.text?esc(j.text):j.name?`Inside mapped city limits of ${esc(j.name)}. Zoning, platting and permits run through the city. <a href="https://www.google.com/search?q=${encodeURIComponent("City of "+j.name+" Texas zoning map")}" target="_blank" rel="noopener">Find the city's zoning map</a>.`:"Outside mapped city limits. A city's extraterritorial jurisdiction may still control platting; county rules apply to roads and drainage."):"",
     "A mapped city limit, not a zoning determination or a city verification letter.", s.sample?"Illustrative sample":`TxGIO / Comptroller city boundaries${j&&j.edited?`, edited ${esc(String(j.edited).split(" ")[0])}`:""}`, st("juris"));
-  const rd = L.road; row("Road access", rd&&rd.status==="ok"?esc(roadText(rd))+".":"", "OpenStreetMap road centerlines within about 100 ft of the tract line. A mapped road is not legal access: frontage, right-of-way and access easements are confirmed by title and survey. Access is not verified by this screen.", s.sample?"Illustrative sample":"OpenStreetMap contributors (ODbL), queried " + today(), st("road"));
+  const rd = L.road; row("Road access", rd&&rd.status==="ok"?esc(roadText(rd))+".":"", `${rd&&rd.src==="OpenStreetMap"?"OpenStreetMap":"TxDOT roadway inventory"} road centerlines within about 100 ft of the tract line. A mapped road is not legal access: frontage, right-of-way and access easements are confirmed by title and survey. Access is not verified by this screen.`, s.sample?"Illustrative sample":(rd&&rd.src==="OpenStreetMap"?"OpenStreetMap contributors (ODbL)":"TxDOT Roadways (Geospatial Roadway Inventory)") + ", queried " + today(), st("road"));
   const refs = s.refs || {}, refList = [refs.addition&&`Addition: ${refs.addition}`, refs.lot&&`Lot ${refs.lot}`, refs.block&&`Block ${refs.block}`, refs.abstract&&`Abstract ${refs.abstract}`, refs.instrument&&`Instrument ${refs.instrument}`, refs.volPage, refs.plat&&`Plat ${refs.plat}`].filter(Boolean);
   const still = ["Where the boundary lines and corners actually are, and whether the deeds close and agree with the neighbors'",
     "Which recorded easements, setbacks and restrictions touch the tract, located on the ground",
@@ -983,12 +1024,32 @@ function renderBrief(s){ if(s===current) setTimeout(updRec, 0);
 function renderSite(s){
   $("#results").hidden = false;
   $("#resKind").textContent = s.sample ? "Sample screen" : "Site screen";
-  $("#resTitle").textContent = s.title;
-  $("#resSub").innerHTML = `${s.sample?'<span class="tag sample">Illustrative sample</span>':s.pin?'<span class="tag sketch">No parcel matched · partial screen</span>':s.sketch?'<span class="tag sketch">Sketched outline · live public data</span>':'<span class="tag live">Live public data</span>'}${esc(s.area)}${s.sample?"":" · "+s.center.lat.toFixed(5)+", "+s.center.lng.toFixed(5)}`;
+  $("#resTitle").textContent = headTitle(s);
+  const matchedAs = !s.sample && !s.pin && !s.sketch && headTitle(s) !== s.title ? `Parcel at ${esc(s.title)} · ` : "";
+  $("#resSub").innerHTML = `${s.sample?'<span class="tag sample">Illustrative sample</span>':s.pin?'<span class="tag sketch">No parcel at this pin</span>':s.sketch?'<span class="tag sketch">Your outline</span>':'<span class="tag live">Live public data</span>'}${matchedAs}${esc(s.area)}${s.sample?"":" · "+s.center.lat.toFixed(5)+", "+s.center.lng.toFixed(5)}`;
   $("#layers").innerHTML = LAYERS.map(([k,l,c])=>`<button type="button" class="lyr" data-k="${k}" aria-pressed="${LAYER_ON[k]}" ${s.sample&&(k==="aerial"||k==="ghost"||k==="adj")?"disabled":""}><i style="background:${c}"></i>${l}</button>`).join("");
-  $("#btnList").textContent = LIST.some(x=>x.key===listKey(s)) ? "On your short list" : "Add to short list";
+  renderListBtn(s); renderStatus(s); if($("#covers")) $("#covers").hidden = true;
   renderReadout(s); drawSheet(s); renderBrief(s); renderInsights(s); renderMatch(s); updPacketForm(); setView(VIEW); renderWorkflow();
 }
+
+/* ===== One quiet status line ===== */
+const LAYER_KEYS = () => STEPS.map(x=>x[0]).filter(k=>k!=="parcel");
+const LOWER = {flood:"FEMA floodplain", wet:"wetlands", water:"streams", soils:"soils", terrain:"terrain", power:"transmission lines", juris:"city limits", road:"road frontage"};
+function layerCounts(s){ const L = s.layers, keys = LAYER_KEYS(), st = k => L[k] ? L[k].status : "wait";
+  const read = keys.filter(k=>st(k)==="ok" || st(k)==="none"), wait = keys.filter(k=>st(k)==="wait"), fail = keys.filter(k=>st(k)==="fail");
+  const n = keys.length + (s.pin ? 0 : 1), r = read.length + (s.pin ? 0 : 1); return {n, r, wait, fail}; }
+const nameList = ks => { const a = ks.map(k=>LOWER[k]||k); return a.length < 3 ? a.join(" and ") : a.slice(0,-1).join(", ") + " and " + a[a.length-1]; };
+function renderStatus(s){ const el = $("#resStatus"); if(!el) return; if(!s || s.sample){ el.innerHTML = s && s.sample ? `Illustrative sample · <button type="button" class="linkbtn" data-covers>What this covers</button>` : ""; return; }
+  const c = layerCounts(s), parts = [`${s.pin ? "Near this pin · " : ""}${c.r} of ${c.n} layers read`];
+  if(c.wait.length) parts.push(c.wait.length > 2 ? "reading the rest" : `${nameList(c.wait)} still loading`);
+  if(c.fail.length) parts.push(`${nameList(c.fail)} not read this time <button type="button" class="linkbtn" data-retry="all">Retry</button>`);
+  if(!c.wait.length && !c.fail.length) parts.push(`Screen ${screenNo(s)}`);
+  el.innerHTML = parts.join(" · ") + ` · <button type="button" class="linkbtn" data-covers>What this covers</button>`;
+  el.classList.toggle("busy", !!c.wait.length); }
+function toggleCovers(){ const c = $("#covers"); if(!c) return; c.hidden = !c.hidden; if(!c.hidden) c.scrollIntoView({behavior:"smooth", block:"nearest"}); }
+function renderListBtn(s){ const b = $("#btnList"); if(!b) return; b.hidden = !!s.pin; b.textContent = LIST.some(x=>x.key===listKey(s)) ? "On your short list" : "Add to short list"; }
+const headTitle = s => s.sample ? s.title : s.pin ? "Near this pin" : s.sketch ? s.title : s.kind === "Address" && s.input && s.parcels && s.parcels.length === 1 ? fmtEntered(s.input) : s.title;
+const fmtEntered = t => { const v = String(t||"").trim(); return v.length > 90 ? v.slice(0,88) + "…" : v; };
 
 /* ===== "Is this the tract you mean?" ===== */
 const CONFIRM_TXT = {whole:"Yes, the whole parcel", more:"More than this parcel", part:"Only part of it", unsure:"Not sure yet"};
@@ -997,16 +1058,16 @@ function renderMatch(s){
   const box = $("#matchBox"); if(!box) return; if(!s || s.sample){ box.hidden = true; return; } box.hidden = false;
   const entered = s.sketch ? (s.parent ? `An outline drawn inside ${s.parent.title}` : "An outline drawn on the sheet") : s.input;
   let matched, note = "";
-  if(s.pin) matched = `<b>No appraisal parcel at this point.</b> The layers below are read for ${PIN_R} ft around the pin, which is not a tract.`;
+  if(s.pin) matched = `<b>No appraisal parcel at this point.</b>`;
   else if(s.sketch) matched = `<b>Your outline, about ${acTxt(s.acres)} acres.</b>${s.parent ? ` Part of appraisal parcel ${esc(s.parent.propId||"")}${s.parent.situs?` (${esc(s.parent.situs)})`:""}, ${acTxt(s.parent.acres)} acres drawn.` : ""}`;
   else if(s.parcels.length > 1) matched = `<b>${s.parcels.length} appraisal parcels combined, about ${acTxt(s.acres)} acres.</b> IDs ${esc(s.parcels.map(p=>p.propId).filter(Boolean).join(", "))}${s.county?` · ${esc(titleCase(s.county))} County`:""}`;
   else { matched = `<b>${esc(s.situs || "No address on the appraisal roll")}</b> · Appraisal ID ${esc(s.propId||"–")}${s.county?` · ${esc(titleCase(s.county))} County`:""}${s.legal?`<br><span class="opt">${esc(String(s.legal).slice(0,140))}</span>`:""}`;
-    if(s.kind === "Address" && s.situs && normAddr(s.situs) !== normAddr(s.input)) note = "The appraisal roll lists this parcel under a different address than the one you entered. Parcels often carry more than one address. Make sure it is the tract you mean."; }
-  const a = acreage(s), acr = a.rows.length ? `<div class="m-acres">${a.rows.map(([l,v])=>`<span><i>${esc(l)}</i><b>${acTxt(v)} ac</b></span>`).join("")}<span><i>${esc(s.county?titleCase(s.county)+" County":"County")} appraisal record</i><b class="opt">not read here</b></span></div>${a.gap?`<p class="m-gap">${esc(a.gap)}</p>`:""}` : "";
+    if(s.kind === "Address" && s.situs && normAddr(s.situs) !== normAddr(s.input)) note = `The appraisal roll lists this parcel as ${titleCase(s.situs)}.`; }
+  const a = acreage(s), acr = a.rows.length ? `<div class="m-acres">${a.rows.map(([l,v])=>`<span><i>${esc(l)}</i><b>${acTxt(v)} ac</b></span>`).join("")}</div>${a.gap?`<p class="m-gap">${esc(a.gap)}</p>`:""}` : "";
   const picks = (s.pin || s._showPicks) && s.layers.adj && s.layers.adj.status==="ok" ? pickItems(s.layers.adj.items, s.P) : "";
-  const q = s.pin ? `<div class="m-q"><span>Pick the parcel you mean, or outline the tract.</span><div class="m-btns"><button type="button" class="btn btn-line btn-sm" data-m="sketch">Sketch the tract</button></div></div>`
+  const q = s.pin ? `<div class="m-q"><span>Pick a nearby parcel, or draw the land you mean.</span><div class="m-btns"><button type="button" class="btn btn-red btn-sm" data-m="sketch">Outline your tract</button></div></div>`
     : `<div class="m-q"><span>Is this the tract you mean?</span><div class="m-btns">${["whole","more","part","not"].map(k=>`<button type="button" class="btn btn-sm ${s.confirm===k?"btn-red":"btn-line"}" data-m="${k}" aria-pressed="${s.confirm===k}">${k==="not"?"Not this one":CONFIRM_TXT[k]}</button>`).join("")}</div></div>`;
-  box.innerHTML = `<div class="m-row"><div class="m-cell"><p class="m-k">You entered</p><p>${esc(entered)}</p></div><div class="m-cell"><p class="m-k">We matched</p><p>${matched}</p></div></div>${note?`<p class="m-note">${esc(note)}</p>`:""}${acr}${s.sketch?"":q}${s.pin && s.layers.adj && s.layers.adj.status==="wait" ? '<p class="opt">Finding the closest parcels…</p>' : ""}${picks?`<div class="picks"><p class="m-k">Closest appraisal parcels</p>${picks}</div>`:""}`;
+  box.innerHTML = `<div class="m-row"><div class="m-cell"><p class="m-k">You entered</p><p>${esc(entered)}</p></div><div class="m-cell"><p class="m-k">We matched</p><p>${matched}</p></div></div>${note?`<p class="m-note">${esc(note)}</p>`:""}${acr}${s.sketch?"":q}${s.pin && s.layers.adj && s.layers.adj.status==="wait" ? '<p class="opt">Finding the closest parcels…</p>' : ""}${picks?`<div class="picks"><p class="m-k">Nearby parcels</p>${picks}</div>`:""}`;
   syncTractField(s); }
 function syncTractField(s){ const f = $("#reqForm"); if(!f || !f.elements.tract) return; const v = s && (s.sketch ? "part" : s.parcels && s.parcels.length > 1 && !s.confirm ? "more" : s.confirm);
   for(const r of f.querySelectorAll('input[name="tract"]')) r.checked = !!v && r.value === v; }
@@ -1018,8 +1079,8 @@ function onMatch(k){ const s = current; if(!s) return;
   if(k==="part"){ toast("Click the corners of the part you mean, then Screen this outline"); startSketch(); $("#sheetWrap").scrollIntoView({behavior:"smooth", block:"center"}); } }
 
 /* ===== Main flow ===== */
-let RUN = 0;
-function waitWorklist(ms=9000){ return new Promise(res=>{ const t0 = performance.now(); (function chk(){ if(WF_SHOWN >= WF.length || performance.now()-t0 > ms) return res(); setTimeout(chk, 150); })(); }); }
+let RUN = 0; const SETTLE_MS = 6000;
+function waitWorklist(ms=4000){ return new Promise(res=>{ const t0 = performance.now(); (function chk(){ if(WF_SHOWN >= WF.length || performance.now()-t0 > ms) return res(); setTimeout(chk, 150); })(); }); }
 async function screen(raw, {quiet=false}={}){
   const my = ++RUN, t0 = performance.now(); note(null); $("#noticePicks").hidden = true;
   const go = $("#go"), gl = go.querySelector("span"); go.disabled = true; gl.textContent = "Screening…";
@@ -1037,13 +1098,12 @@ async function screen(raw, {quiet=false}={}){
     if(!s.sample){
       guide(s.pin ? "No appraisal parcel at that point. Reading the public layers around the pin and the closest parcels…" : `Parcel found: ${acTxt(s.acres)} acres${s.county?` in ${titleCase(s.county)} County`:""}. Reading the public layers…`, "busy");
       safeReplace(null, "", shareURL(s)); $("#sheetWrap").classList.add("scanning");
-      await screenLayers(s); $("#sheetWrap").classList.remove("scanning");
-      if(s === current){ renderBrief(s); renderReadout(s); renderInsights(s); renderMatch(s);
-        await waitWorklist(); if(s !== current) return s;
-        const failed = STEPS.filter(([k])=>s.layers[k] && s.layers[k].status==="fail").length;
-        const tail = failed ? ` ${failed} public service${failed>1?"s":""} didn't answer, so ${failed>1?"those layers are":"that layer is"} left off.` : "";
-        guide(s.pin ? `Partial screen done in ${((performance.now()-t0)/1000).toFixed(0)} s: no parcel matched, so the layers were read around the pin.${tail} Pick a nearby parcel or sketch the tract below.`
-          : `Screen complete in ${((performance.now()-t0)/1000).toFixed(0)} s.${tail} Check the match below, then the sheet and the read.`, "ok"); } }
+      // show what is in after a few seconds; slower layers slide in on their own and the status line follows them
+      const all = screenLayers(s).then(()=>{ s._done = true; if(s === current){ $("#sheetWrap").classList.remove("scanning"); renderBrief(s); renderReadout(s); renderInsights(s); renderMatch(s); renderStatus(s); } });
+      s._all = all;
+      await Promise.race([all, sleep(SETTLE_MS)]);
+      if(s === current){ s._settled = true; $("#sheetWrap").classList.remove("scanning"); renderBrief(s); renderReadout(s); renderInsights(s); renderMatch(s); renderStatus(s);
+        guide(s.pin ? "No parcel at that pin. Results below are for the area around it." : "Results are below.", "ok"); } }
     else { safeReplace(null, "", location.pathname + "?" + qs({loc:raw, ...(TYPE?{type:TYPE}:{}) , stage:STAGE})); guide("Sample opened. It is illustrative, so try a real site next.", "ok"); }
     return s;
   } catch(e){
@@ -1090,11 +1150,15 @@ async function toggleNeighbor(oid){
   await rebuildAssemblage(s);
 }
 
-async function restoreAssemblage(s, adds){
+async function restoreAssemblage(s, adds, ids){
   let added = 0;
   for(const [lat,lng] of adds){ if(s !== current) return;
-    try { const p = await fetchParcelAt({lat,lng}); if(p && !s.parcels.some(x=>String(x.oid)===String(p.oid))){ s.parcels.push(p); s.added.push(p.oid); added++; } } catch(e){} }
-  if(!added || s !== current) return;
+    for(let n = 0; n < 2; n++){ try { const p = await fetchParcelAt({lat,lng}); if(p && !s.parcels.some(x=>String(x.oid)===String(p.oid))){ s.parcels.push(p); s.added.push(p.oid); added++; } break; } catch(e){ await sleep(500); } } }
+  if(s !== current) return;
+  const want = ids && ids.length ? ids.length : adds.length + 1, have = ids && ids.length ? ids.filter(id=>s.parcels.some(p=>String(p.oid)===String(id))).length : s.parcels.length;
+  s._restoreMiss = Math.max(0, want - have);
+  if(s._restoreMiss) note(`${s._restoreMiss} of the ${want} parcels in this link didn't load, so this screen is not the full tract. Reload the link to try again.`);
+  if(!added) return;
   if(s.layers.adj && s.layers.adj.items){ const ids = new Set(s.parcels.map(p=>String(p.oid))); s.layers.adj.items = s.layers.adj.items.filter(n=>!ids.has(String(n.oid))); }
   await rebuildAssemblage(s);
 }
@@ -1115,9 +1179,10 @@ function shareURL(s){ const base = location.origin + location.pathname;
   if(s.sketch) return base + "?" + qs({sketch:s.sketchLL.map(p=>p[1].toFixed(6)+","+p[0].toFixed(6)).join(";"), ...(TYPE?{type:TYPE}:{}), stage:STAGE});
   const ip = p => { const P = proj(s.center), ll = P.i(interiorPoint(p.ringsLL.map(x=>x.map(P.f)))); return ll[1].toFixed(6)+","+ll[0].toFixed(6); };
   const moved = !s.sample && s.parcels && s.parcels.length && String(s.parcels[0].oid) !== String(s.oid);
-  const loc = s.sample ? "sample:"+s.sampleId : moved ? ip(s.parcels[0]) : (s.kind==="Address" ? s.input : s.parcels && s.parcels.length ? ip(s.parcels[0]) : `${s.center.lat.toFixed(6)}, ${s.center.lng.toFixed(6)}`);
+  const loc = s.sample ? "sample:"+s.sampleId : moved ? ip(s.parcels[0]) : s.input && !/^sample:/.test(s.input) ? s.input : s.parcels && s.parcels.length ? ip(s.parcels[0]) : `${s.center.lat.toFixed(6)}, ${s.center.lng.toFixed(6)}`;
   const add = !s.sample && s.parcels && s.parcels.length > 1 ? s.parcels.slice(1).map(p=>{ const P = proj(s.center), r = p.ringsLL.map(x=>x.map(P.f)), ll = P.i(interiorPoint(r)); return ll[1].toFixed(6)+","+ll[0].toFixed(6); }).join(";") : null;
-  return base + "?" + qs({loc, ...(add?{add}:{}), ...(TYPE?{type:TYPE}:{}), stage:STAGE}); }
+  const ids = add ? s.parcels.map(p=>p.oid).join(",") : null;
+  return base + "?" + qs({loc, ...(add?{add, ids}:{}), ...(TYPE?{type:TYPE}:{}), stage:STAGE}); }
 
 /* ===== Short list (this browser only) ===== */
 function loadList(){ try { return JSON.parse(localStorage.getItem("ascScreenList")||"[]"); } catch(e){ return []; } }
@@ -1128,7 +1193,7 @@ function mainSoil(units){ if(!units || !units.length) return null; const nm = u 
   return `${nm(units[0])} (~${fmt(units[0].share*100,0)}%)`; }
 function summary(s){ const L = s.layers, ok = k => L[k] && L[k].status==="ok", st = {};
   for(const [k] of STEPS) if(k!=="parcel") st[k] = L[k] ? L[k].status : "wait";
-  return { v:2, key:listKey(s), title:s.title, area:s.area, sample:!!s.sample, pin:!!s.pin, entered: s.sample ? null : s.sketch ? "sketched outline" : s.input, propId: s.propId || null,
+  return { v:3, key:listKey(s), title:s.title, head:headTitle(s), area:s.area, sample:!!s.sample, pin:!!s.pin, entered: s.sample ? null : s.sketch ? "sketched outline" : s.input, propId: s.propId || null,
     acres: s.pin ? null : +s.acres.toFixed(2), feed: s.sample || s.pin ? null : ((acreage(s).rows.find(r=>/^Roll acreage/.test(r[0])) || [])[1] || null), gap: !!acreage(s).gap, st,
     flood: ok("flood") ? +(L.flood.shareSFHA*100).toFixed(0) : null, floodway: ok("flood") ? +(L.flood.shareFloodway*100).toFixed(0) : null,
     vzone: ok("flood") && (L.flood.zonesOnTract||[]).some(z=>/^V/.test(z)), femaYear: ok("flood") && L.flood.firm && L.flood.firm.effMs ? new Date(L.flood.firm.effMs).getUTCFullYear() : null,
@@ -1139,21 +1204,41 @@ function summary(s){ const L = s.layers, ok = k => L[k] && L[k].status==="ok", s
     line: ok("power") ? (L.power.nearest ? lineDistText(L.power.nearest.d, true) : `None within ${s.powerMi||CONFIG.powerRadiusMi} mi`) : null, kv: ok("power") && L.power.nearest ? L.power.nearest.kv : null,
     juris: ok("juris") ? (L.juris.text || (L.juris.name ? "City of "+L.juris.name : "Outside city limits")) : null,
     url: shareURL(s), date: new Date().toISOString().slice(0,10) }; }
-function addCurrentToList(){ if(!current) return; if(!current.sample && STEPS.some(([k])=>k!=="parcel" && (!current.layers[k] || current.layers[k].status==="wait"))){ toast("Wait for the screen to finish, then add it"); return; } const sum = summary(current); LIST = LIST.filter(x=>x.key!==sum.key); LIST.push(sum); saveList(); $("#btnList").textContent = "On your short list"; toast("Added to your short list"); }
+function addCurrentToList(){ if(!current) return false; if(current.pin){ toast("Pick a parcel or outline your tract first"); return false; }
+  if(!current.sample && STEPS.some(([k])=>k!=="parcel" && (!current.layers[k] || current.layers[k].status==="wait"))){ toast("Adding it as soon as the last layer is in"); const s = current; (s._all||Promise.resolve()).then(()=>{ if(s===current) addCurrentToList(); }); return false; } const sum = summary(current); LIST = LIST.filter(x=>x.key!==sum.key); LIST.push(sum); saveList(); $("#btnList").textContent = "On your short list"; toast("Added to your short list"); return true; }
 function renderList(){
   const t = $("#slTable"), n = LIST.length; $("#navCount").hidden = !n; $("#navCount").textContent = n; $("#slEmpty").hidden = !!n; $("#slNote").hidden = !n;
   if(!n){ t.innerHTML = ""; return; }
   // a cell says why it is empty: not read (the service didn't answer), not mapped, or simply absent on an older entry
   const c = (x, k, val) => { const st = x.st && x.st[k]; if(st === "fail") return '<span class="opt">not read · rescreen</span>'; if(st === "none") return '<span class="opt">not mapped</span>'; return val == null ? '<span class="opt">–</span>' : val; };
   t.innerHTML = `<thead><tr><th>Site</th><th>Acres</th><th>In mapped 1% floodplain</th><th>Mapped wetland</th><th>Stream or water</th><th>Mapped road frontage</th><th>Relief / avg slope</th><th>Soil</th><th>Nearest line</th><th>Jurisdiction</th><th></th></tr></thead><tbody>` +
-    LIST.map((x,i)=>`<tr><td><a href="${esc(x.url)}">${esc(x.title)}</a><div class="opt">${esc(x.area)}${x.sample?" · sample":""}${x.propId?` · ID ${esc(x.propId)}`:""}</div>${x.entered && x.entered !== x.title ? `<div class="opt">You entered: ${esc(x.entered)}</div>` : ""}</td>
+    LIST.map((x,i)=>`<tr><td><a href="${esc(x.url)}">${esc(x.head||x.title)}</a>${x.head && x.head !== x.title ? `<div class="opt">Parcel at ${esc(x.title)}</div>` : ""}<div class="opt">${esc(x.area)}${x.sample?" · sample":""}${x.propId?` · ID ${esc(x.propId)}`:""}</div>${x.entered && x.entered !== x.title && x.entered !== x.head ? `<div class="opt">You entered: ${esc(x.entered)}</div>` : ""}</td>
       <td class="num">${x.pin ? '<span class="opt">no parcel</span>' : acTxt(x.acres)}${x.feed ? `<div class="opt">roll ${acTxt(x.feed)}</div>` : ""}${x.gap ? '<div class="flag">check acreage</div>' : ""}</td>
       <td class="num">${c(x,"flood", x.flood==null?null:`${x.flood}%${x.floodway?` <span class="opt">(${x.floodway}% floodway)</span>`:""}`)}${x.vzone?'<div class="flag">coastal V zone</div>':""}${x.femaYear && new Date().getFullYear()-x.femaYear >= 10 ? `<div class="opt">map from ${x.femaYear}</div>` : ""}</td>
       <td class="num">${c(x,"wet", x.wet==null?null:x.wet+"%")}</td><td>${c(x,"water", x.stream==null?null:(x.stream===true?"Yes":x.stream===false?"No":esc(x.stream)))}</td>
       <td>${c(x,"road", x.road==null?null:esc(x.road))}</td>
       <td class="num">${c(x,"terrain", x.relief==null?null:`${x.relief} ft / ${x.slope}%`)}</td><td>${c(x,"soils", x.soil==null?null:esc(x.soil))}</td>
-      <td class="num">${c(x,"power", x.line==null?null:`${esc(typeof x.line==="number"?x.line+" mi":x.line)}${x.kv?` · ${x.kv} kV`:""}`)}</td><td>${c(x,"juris", x.juris==null?null:esc(x.juris))}</td><td><button type="button" data-rm="${i}">Remove</button></td></tr>`).join("") + `</tbody>`;
+      <td class="num">${c(x,"power", x.line==null?null:`${esc(typeof x.line==="number"?lineDistText(x.line*5280, true):x.line)}${x.kv?` · ${x.kv} kV`:""}`)}</td><td>${c(x,"juris", x.juris==null?null:esc(x.juris))}</td><td><button type="button" data-rm="${i}">Remove</button></td></tr>`).join("") + `</tbody>`;
 }
+/* ===== Exact tract for the estimator ===== */
+const r7 = v => +(+v).toFixed(7);
+function tractGeometry(s){
+  if(s.pin) return {kind:"pin", lat:r7(s.center.lat), lng:r7(s.center.lng), radius_ft:PIN_R};
+  if(s.sketch) return {kind:"outline", corners:s.sketchLL.length, vertices:s.sketchLL.map(p=>[r7(p[1]), r7(p[0])]), acres:+s.acres.toFixed(3)};
+  const P = proj(s.center), pts = s.parcels.map(p=>{ const ll = P.i(interiorPoint(p.ringsLL.map(x=>x.map(P.f)))); return [r7(ll[1]), r7(ll[0])]; });
+  const rings = s.rings.map(r=>r.map(s.P.i).map(p=>[r7(p[1]), r7(p[0])])), nPts = rings.reduce((t,r)=>t+r.length,0);
+  return {kind:"parcels", count:s.parcels.length, acres:+s.acres.toFixed(3),
+    parcels:s.parcels.map((p,i)=>({object_id:p.oid, prop_id:p.propId||null, county:p.county||s.county||null, situs:p.situs||null, point:pts[i]})),
+    outline: nPts <= 6000 ? rings : null, outline_points:nPts};
+}
+function geometryIntact(s, g){ try {
+  const u = new URL(shareURL(s)), q = u.searchParams;
+  if(g.kind === "outline"){ const back = (q.get("sketch")||"").split(";").map(t=>t.split(",").map(Number));
+    return back.length === s.sketchLL.length && g.vertices.length === s.sketchLL.length && back.every((p,i)=>Math.abs(p[0]-s.sketchLL[i][1]) < 2e-6 && Math.abs(p[1]-s.sketchLL[i][0]) < 2e-6); }
+  if(g.kind === "parcels"){ const adds = (q.get("add")||"").split(";").filter(Boolean), ids = (q.get("ids")||"").split(",").filter(Boolean);
+    return g.parcels.length === s.parcels.length && (s.parcels.length === 1 || (adds.length === s.parcels.length - 1 && ids.length === s.parcels.length)); }
+  return true; } catch(_){ return false; } }
+
 /* ===== Packet request (the gate: contact details in, packet by email) ===== */
 function updPacketForm(){ updRec(); const n = LIST.length; $("#listOpt").hidden = !n; $("#listN").textContent = n; $("#pkListItem").hidden = !n; }
 function unlockBrief(){ $("#briefWrap").classList.remove("locked"); document.body.classList.add("unlocked"); }
@@ -1165,9 +1250,12 @@ async function submitRequest(e){
   d.proposal = d.want === "proposal";
   const s = current, rec = s ? recommend(s) : null, L = s ? s.layers : {};
   const clip = (v,n) => v == null || v === "" ? null : String(v).slice(0,n);
-  const siteRef = s ? (s.sample ? "sample:"+s.sampleId : s.pin ? `pin (no parcel): ${s.center.lat.toFixed(6)}, ${s.center.lng.toFixed(6)}` : s.sketch ? "sketch:"+s.sketchLL.map(p=>p[1].toFixed(6)+","+p[0].toFixed(6)).join(";") : (s.situs || s.input)) : null;
+  const siteRef = s ? (s.sample ? "sample:"+s.sampleId : s.pin ? `pin (no parcel): ${s.center.lat.toFixed(6)}, ${s.center.lng.toFixed(6)}` : s.sketch ? `outline drawn on the screen, ${s.sketchLL.length} corners` : (s.situs || s.input)) : null;
+  // the estimator reopens exactly what the client screened: every corner of an outline, every selected parcel
+  const geometry = s && !s.sample ? tractGeometry(s) : null;
+  if(geometry && !geometryIntact(s, geometry)){ err.textContent = "The outline didn't save completely. Please draw it again, then send the request."; err.hidden = false; return; }
   const list = d.withList && LIST.length ? LIST.slice(-30).map(x=>({title:String(x.title).slice(0,120), url:String(x.url).slice(0,600), acres:x.acres})) : [];
-  const packet = { v:1, link: s ? shareURL(s).slice(0,1500) : null, screen_no: s ? screenNo(s) : null, title: s ? String(s.title).slice(0,160) : null, stage:STAGE, type:TYPE, list,
+  const packet = { v:2, link: s ? shareURL(s) : null, geometry, screen_no: s ? screenNo(s) : null, title: s ? String(s.title).slice(0,160) : null, stage:STAGE, type:TYPE, list,
     failed_layers: s && !s.sample ? Object.keys(L).filter(k=>L[k] && L[k].status==="fail") : [], unmapped_layers: s && !s.sample ? Object.keys(L).filter(k=>L[k] && L[k].status==="none") : [],
     fema_effective: L.flood && L.flood.firm ? L.flood.firm.eff : null,
     entered: s ? clip(s.input, 300) : null, matched: s ? clip(s.pin ? "no parcel at pin" : s.sketch ? "sketched outline" : s.situs || s.title, 300) : null, tract_confirm: d.tract || null,
@@ -1199,14 +1287,21 @@ function updWant(){ const f = $("#reqForm"), w = f && f.elements.want ? f.elemen
 /* ===== Bulk ===== */
 async function runBulk(){
   const lines = $("#bulkText").value.split(/\n+/).map(x=>x.trim()).filter(Boolean).slice(0,30); if(!lines.length) return;
-  const st = $("#bulkStatus"), btn = $("#bulkGo"); btn.disabled = true; let ok = 0, bad = [];
+  const st = $("#bulkStatus"), btn = $("#bulkGo"), out = $("#bulkList"); btn.disabled = true;
+  const res = lines.map(l=>({l, st:"queued", why:""}));
+  const paint = () => { if(out){ out.hidden = false; out.innerHTML = res.map(r=>`<li class="b-${r.st}"><b>${{queued:"Queued",run:"Screening",added:"Added",partial:"Added, partial",failed:"Not added"}[r.st]}</b> ${r.st==="failed"?`<button type="button" class="linkbtn" data-open="${esc(r.l)}">${esc(r.l)}</button>`:`<span>${esc(r.l)}</span>`}${r.why?` <i>${esc(r.why)}</i>`:""}</li>`).join(""); } };
+  paint();
   for(let i=0;i<lines.length;i++){
-    st.textContent = `Screening ${i+1} of ${lines.length}…`;
+    st.textContent = `Screening ${i+1} of ${lines.length}…`; res[i].st = "run"; paint();
     const s = await screen(lines[i], {quiet:true});
-    if(s){ addCurrentToList(); ok++; } else bad.push(lines[i]);
-    await sleep(300);
+    if(!s){ res[i].st = "failed"; res[i].why = ($("#notice").textContent || "not found").replace(/\.$/,""); }
+    else if(s.pin){ res[i].st = "failed"; res[i].why = "no parcel at that point; open it to pick one or outline the tract"; }
+    else { if(s._all) await s._all; if(s !== current){ res[i].st = "failed"; res[i].why = "interrupted"; }
+      else { addCurrentToList(); const c = layerCounts(s); res[i].st = c.fail.length ? "partial" : "added"; res[i].why = c.fail.length ? `${nameList(c.fail)} not read` : ""; } }
+    paint(); await sleep(200);
   }
-  btn.disabled = false; st.textContent = `${ok} of ${lines.length} added to your short list.${bad.length?` Not found: ${bad.slice(0,3).join("; ")}${bad.length>3?"…":""}`:""}`;
+  const n = k => res.filter(r=>r.st===k).length, added = n("added") + n("partial");
+  btn.disabled = false; st.textContent = `${added} of ${lines.length} added to your short list${n("failed")?` · ${n("failed")} not added`:""}.`;
   note(null); $("#shortlist").scrollIntoView({behavior:"smooth"});
 }
 
@@ -1244,7 +1339,7 @@ const WF = [
   {id:"water", t:"Tracing water and wetlands",   d:"USFWS NWI and USGS NHD",                keys:["wet","water"], ico:"drop"},
   {id:"soils", t:"Reading the soils",            d:"NRCS SSURGO",                           keys:["soils"],  ico:"layers"},
   {id:"topo",  t:"Gathering the topo",           d:"USGS 3DEP public lidar",                keys:["terrain"],ico:"contour"},
-  {id:"power", t:"Checking roads, power and city limits",d:"OpenStreetMap roads, HIFLD lines, TxGIO city limits", keys:["road","power","juris"], ico:"bolt"},
+  {id:"power", t:"Checking roads, power and city limits",d:"TxDOT roads, HIFLD lines, TxGIO city limits", keys:["road","power","juris"], ico:"bolt"},
   {id:"exhibit",t:"Drafting the exhibit",        d:"Laying it out on the ASC sheet",        keys:"all",      ico:"sheet"}
 ];
 const LST = {}, MON_T = {}, WF_T = {};
@@ -1252,7 +1347,7 @@ const LST = {}, MON_T = {}, WF_T = {};
 function lst(k){ const v = LST[k] || "idle"; if(k==="parcel" && v==="idle" && current && current.sketch && STEPS.some(([x])=>x!=="parcel" && LST[x] && LST[x]!=="idle")) return "ok"; return v; }
 function wfState(step){
   const keys = step.keys === "all" ? STEPS.map(x=>x[0]) : step.keys, st = keys.map(lst);
-  if(step.keys === "all"){ if(st.every(x=>x==="idle")) return "idle"; return st.some(x=>x==="wait"||x==="idle") ? (lst("parcel")==="ok"?"wait":"idle") : "ok"; }
+  if(step.keys === "all"){ if(st.every(x=>x==="idle")) return "idle"; return st.some(x=>x==="wait"||x==="idle") ? (lst("parcel")==="ok"||lst("parcel")==="na"?"wait":"idle") : st.some(x=>x==="fail") ? "part" : "ok"; }
   if(st.some(x=>x==="wait")) return "wait"; if(st.every(x=>x==="idle")) return "idle";
   if(st.every(x=>x==="ok"||x==="na")) return "ok"; return st.some(x=>x==="ok"||x==="na") ? "part" : "fail";
 }
@@ -1260,24 +1355,24 @@ const WF_SRC_NAME = {road:"road map", wet:"wetlands map", water:"stream map", po
 function wfDetail(step, s){
   if(!s) return step.d;
   if(Array.isArray(step.keys) && step.keys.length > 1){ const miss = step.keys.filter(k=>lst(k)==="fail").map(k=>WF_SRC_NAME[k]||k);
-    if(miss.length){ const rest = wfDetail0(step, s); return (rest && rest !== step.d ? rest + " · " : "") + miss.join(", ") + " did not answer"; } }
+    if(miss.length){ const rest = wfDetail0(step, s); return (rest && rest !== step.d ? rest + " · " : "") + miss.join(", ") + " not read this time"; } }
   return wfDetail0(step, s); }
 function wfDetail0(step, s){ const L = s.layers, ok = k => L[k] && L[k].status==="ok", r = s.refs || {};
   switch(step.id){
     case "rec": return s.sample ? "Illustrative sample record" : s.pin ? "No appraisal parcel at the pin" : s.sketch ? "Sketched outline, no record attached" : [s.propId && "ID " + s.propId, r.abstract && "Abstract " + r.abstract, r.lot && "Lot " + r.lot, r.block && "Block " + r.block].filter(Boolean).slice(0,3).join(" · ") || (s.county ? titleCase(s.county) + " County roll" : step.d);
     case "sketch": return s.pin ? `${PIN_R}-ft circle around the pin` : `${acTxt(s.acres)} acres ± · ${s.rings.reduce((t,x)=>t+x.length,0)} vertices`;
-    case "flood": return ok("flood") ? (L.flood.shareSFHA>0.005 ? `~${fmt(L.flood.shareSFHA*100,0)}% in mapped 1% floodplain` : "Outside mapped 1% floodplain") + (L.flood.panel && !s.sample ? ` · ${L.flood.panel}` : "") + (L.flood.firm && L.flood.firm.eff && !s.sample ? ` · map effective ${L.flood.firm.eff}` : "") : step.d;
+    case "flood": return ok("flood") ? (L.flood.shareSFHA>0.005 ? `~${fmt(L.flood.shareSFHA*100,0)}% in mapped 1% floodplain` : L.flood.sfhaStrip ? "Narrow floodplain strip touches" : "Outside mapped 1% floodplain") + (L.flood.panel && !s.sample ? ` · ${L.flood.panel}` : "") + (L.flood.firm && L.flood.firm.eff && !s.sample ? ` · map effective ${L.flood.firm.eff}` : "") : step.d;
     case "water": return ok("wet") || ok("water") ? [ok("wet") ? (L.wet.share>0.002 ? `~${fmt(L.wet.share*100,1)}% mapped wetland` : "No mapped wetland on tract") : null, ok("water") ? (L.water.crossing ? "stream touches tract" : "no mapped stream across") : null].filter(Boolean).join(" · ") : step.d;
     case "soils": return ok("soils") && L.soils.units[0] ? `${L.soils.units[0].name.split(",")[0]} · group ${L.soils.units[0].hyd||"n/a"}` : step.d;
     case "topo": return ok("terrain") ? `${fmt(L.terrain.min,0)}–${fmt(L.terrain.max,0)} ft · ${s._contourIv||"–"}-ft contours` : step.d;
     case "power": return [ok("power") ? (L.power.nearest ? lineDistText(L.power.nearest.d, true).toLowerCase() : "no line nearby") : null, ok("juris") ? (L.juris.name ? titleCase(L.juris.name) : L.juris.text || "outside city limits") : null, ok("road") ? (L.road.touches ? "road frontage mapped" : "no mapped road frontage") : null].filter(Boolean).join(" · ") || step.d;
-    case "exhibit": return wfState(step)==="ok" ? `Sheet 1 of 1 · ${screenNo(s)}` : step.d;
+    case "exhibit": { const c = layerCounts(s); return wfState(step)==="ok" ? `Sheet 1 of 1 · ${screenNo(s)}` : c.fail.length ? `${c.r} of ${c.n} layers on the sheet · ${nameList(c.fail)} not read` : step.d; }
   }
   return step.d;
 }
 function wfHTML(step, s, compact, st){
   st = st || wfState(step); const t = WF_T[step.id];
-  const ms = st==="wait" ? "on it" : st==="ok" ? (t && +t >= 0.2 ? t + " s" : "done") : st==="part" ? "partial" : st==="fail" ? "no answer" : "queued";
+  const ms = st==="wait" ? "on it" : st==="ok" ? (t && +t >= 0.2 ? t + " s" : "done") : st==="part" ? "partial" : st==="fail" ? "not read" : "queued";
   return `<li class="wf ${st}" data-id="${step.id}"><span class="wf-ico" aria-hidden="true"><svg viewBox="0 0 24 24">${WF_ICO[step.ico]}</svg></span>
     <span class="wf-txt"><span class="wf-t">${esc(step.t)}</span>${compact?"":`<span class="wf-d">${esc(st==="idle"||st==="wait"?step.d:wfDetail(step, s))}</span>`}</span><span class="wf-ms">${ms}</span></li>`;
 }
@@ -1286,7 +1381,7 @@ let WF_SHOWN = 0, WF_TICK = 0;
 function wfShown(i){ const real = wfState(WF[i]); if(i < WF_SHOWN) return real; if(i === WF_SHOWN && WF.some(w=>wfState(w)!=="idle")) return "wait"; return "idle"; }
 function wfAdvance(){ WF_TICK = 0; if(WF_SHOWN >= WF.length) return; const r = wfState(WF[WF_SHOWN]);
   if(r === "ok" || r === "part" || r === "fail"){ WF_SHOWN++; paintWorkflow(); }
-  if(WF_SHOWN < WF.length && WF.some(w=>wfState(w)!=="idle")) WF_TICK = setTimeout(wfAdvance, matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 520); }
+  if(WF_SHOWN < WF.length && WF.some(w=>wfState(w)!=="idle")) WF_TICK = setTimeout(wfAdvance, matchMedia("(prefers-reduced-motion: reduce)").matches || (current && current._done) ? 40 : 420); }
 function renderWorkflow(){
   WF.forEach(w=>{ const st = wfState(w); if(st==="wait" && !WF_T["_"+w.id]) WF_T["_"+w.id] = performance.now(); if((st==="ok"||st==="part") && WF_T["_"+w.id] && !WF_T[w.id]) WF_T[w.id] = ((performance.now()-WF_T["_"+w.id])/1000).toFixed(1); });
   paintWorkflow(); if(!WF_TICK) WF_TICK = setTimeout(wfAdvance, 260); }
@@ -1297,8 +1392,9 @@ function paintWorkflow(){
   const strip = $("#wfStrip"); if(strip) strip.innerHTML = WF.map((w,i)=>row(w,i,true)).join("");
   const pct = Math.round(done/WF.length*100); document.querySelectorAll(".wf-bar i").forEach(b=>b.style.width = pct+"%");
   renderPanelHead();
-  const ms = $("#monState"); if(ms){ ms.textContent = busy ? `Working · ${done} of ${WF.length}` : done===WF.length ? "Exhibit drafted" : "Standing by"; ms.classList.toggle("run", busy); }
-  const ws = $("#wfState"); if(ws) ws.textContent = busy ? `Step ${Math.min(done+1, WF.length)} of ${WF.length} · ${WF[Math.min(done, WF.length-1)].t}` : done===WF.length ? "Worked up · sheet drafted" : "";
+  const c = s && !s.sample ? layerCounts(s) : null, fin = done===WF.length, full = fin && (!c || (!c.fail.length && !c.wait.length));
+  const ms = $("#monState"); if(ms){ ms.textContent = busy ? `Working · ${done} of ${WF.length}` : full ? "Sheet complete" : fin ? `${c.r} of ${c.n} layers read` : "Standing by"; ms.classList.toggle("run", busy); }
+  const ws = $("#wfState"); if(ws) ws.textContent = busy ? `Step ${Math.min(done+1, WF.length)} of ${WF.length} · ${WF[Math.min(done, WF.length-1)].t}` : full ? "Sheet complete" : fin ? `${c.r} of ${c.n} layers read` : "";
 }
 function renderMonitor(){ renderWorkflow(); }
 function setStatus(key, st){
@@ -1334,8 +1430,10 @@ function insights(s){
   const L = s.layers, out = [], ok = k => L[k] && L[k].status==="ok", type = TYPE || (s.sample ? s.type : null);
   if(ok("flood")){ const f = L.flood, side = floodSide(s);
     out.push(f.shareSFHA > 0.005 ? {c:"#5ab0ff", h:"Floodplain", p:`About ${fmt(f.shareSFHA*100,0)}% of the tract sits in FEMA's mapped 1% annual-chance floodplain${side?`, mostly on the ${side} side`:""}. Lenders and engineers will ask where that line falls on the ground, which only a survey tied to the base flood elevation can show.`}
-      : {c:"#43c28a", h:"Floodplain", p:"Outside FEMA's mapped 1% annual-chance floodplain, based on an aligned map overlay. That is a map reading, not an elevation survey."}); }
-  else out.push({wait:true, h:"Floodplain", p:"Reading FEMA's flood map…"});
+      : f.sfhaStrip ? {c:"#5ab0ff", h:"Floodplain", p:"A narrow strip of FEMA's mapped 1% annual-chance floodplain touches the tract, under 1% of it. If that edge matters to the layout, a survey tied to the base flood elevation shows where it falls."}
+      : {c:"#43c28a", h:"Floodplain", p:"Outside FEMA's mapped 1% annual-chance floodplain, based on an aligned map overlay."}); }
+  else if(L.flood && L.flood.status==="none") out.push({c:"#5ab0ff", h:"Floodplain", p:"FEMA has no flood map for this area. Unstudied ground is not the same as outside the floodplain, so drainage and elevation deserve a closer look before you commit."});
+  else if(!L.flood || L.flood.status==="wait") out.push({wait:true, h:"Floodplain", p:"Reading FEMA's flood map…"});
   if(ok("terrain")){ const t = L.terrain;
     out.push({c:"#e0a33b", h:"Ground", p:`About ${fmt(t.relief,0)} ft of relief${t.fallDir?`, falling generally toward the ${t.fallDir}`:""}, with an average slope near ${fmt(t.meanSlope,1)}%. ${t.relief >= 15 ? "Grading will be a real cost line here, so design topography matters early." : t.meanSlope < 2 ? "Mostly gentle ground; drainage direction will shape the layout more than grading will." : "Moderate ground. Design topography settles pads and drainage."}`}); }
   else if(!L.terrain || L.terrain.status==="wait") out.push({wait:true, h:"Ground", p:"Reading public lidar…"});
@@ -1364,7 +1462,7 @@ function insMedia(th){
   return m; }
 function renderInsights(s){
   const box = $("#insights"); if(!box || !s) return; if(s.layers && !s.layers.flood && s.sketch){ box.innerHTML = ""; return; }
-  const list = insights(s), have = [...box.children];
+  const list = insights(s).map(x=>({...x, p:pinWords(s, x.p)})), have = [...box.children];
   list.forEach((x,i)=>{ const el = have[i], key = x.h + (x.wait?":w:":":") + x.p, th = INS_THEME[x.h] || "record";
     if(el && el.dataset.h === key) return;
     if(el && el.dataset.th === th){ el.dataset.h = key; el.className = "ins" + (x.wait?" wait":""); if(x.c) el.style.setProperty("--c", x.c);
@@ -1413,7 +1511,10 @@ function init(){
   $("#bulkGo").addEventListener("click", runBulk);
   $("#layers").addEventListener("click", e=>{ const b = e.target.closest(".lyr"); if(!b) return; const k = b.dataset.k; LAYER_ON[k] = !LAYER_ON[k]; if(LAYER_ON[k] && (k==="aerial"||k==="ghost")) LAYER_ON[k==="aerial"?"ghost":"aerial"] = false; document.querySelectorAll("#layers .lyr").forEach(x=>x.setAttribute("aria-pressed", String(!!LAYER_ON[x.dataset.k]))); drawSheet(current); });
   $("#tabSheet").addEventListener("click", ()=>setView("sheet")); $("#tabModel").addEventListener("click", ()=>setView("model"));
-  $("#btnRetry").addEventListener("click", retryMissing);
+  $("#btnRetry").addEventListener("click", ()=>retryMissing());
+  document.addEventListener("click", e=>{ const r = e.target.closest("[data-retry]"); if(r){ retryMissing(r.dataset.retry === "all" ? undefined : r.dataset.retry); return; }
+    if(e.target.closest("[data-covers]")) toggleCovers();
+    const o = e.target.closest("[data-open]"); if(o) screen(o.dataset.open); });
   $("#btnSavePdf").addEventListener("click", ()=>{ if(current){ setView("sheet"); drawSheet(current); } window.print(); });
   $("#btnShare").addEventListener("click", async ()=>{ if(!current) return; const u = shareURL(current); try { await navigator.clipboard.writeText(u); toast("Link copied. It re-runs the screen with today's public data."); } catch(e){ prompt("Copy this link", u); } });
   $("#btnList").addEventListener("click", addCurrentToList);
@@ -1445,8 +1546,8 @@ function init(){
   if(u.get("type") && ICON[u.get("type")]) setType(u.get("type"), true);
   if(u.get("stage") && STAGES.some(s=>s[0]===u.get("stage"))) setStage(u.get("stage"));
   if(u.get("loc")){ $("#loc").value = /^sample:/.test(u.get("loc")) ? "" : u.get("loc");
-    const adds = (u.get("add")||"").split(";").map(t=>t.split(",").map(Number)).filter(p=>p.length===2&&p.every(isFinite)).slice(0,25);
-    screen(u.get("loc")).then(s=>{ if(s && adds.length) restoreAssemblage(s, adds); }); }
+    const adds = (u.get("add")||"").split(";").map(t=>t.split(",").map(Number)).filter(p=>p.length===2&&p.every(isFinite)).slice(0,80), ids = (u.get("ids")||"").split(",").filter(Boolean);
+    screen(u.get("loc")).then(s=>{ if(s && adds.length) restoreAssemblage(s, adds, ids); }); }
   else if(u.get("sketch")){ const pts = u.get("sketch").split(";").map(t=>t.split(",").map(Number)).filter(p=>p.length===2&&p.every(isFinite)).map(([la,lo])=>[lo,la]);
     if(pts.length>=3){ const c = {lat:pts.reduce((t,p)=>t+p[1],0)/pts.length, lng:pts.reduce((t,p)=>t+p[0],0)/pts.length}, P = proj(c);
       const base = {P, county:null, area:"Texas"}; const s = siteFromSketch(pts.map(P.f), base); current = s; renderSite(s); screenLayers(s).then(()=>{ if(s===current){ renderBrief(s); renderReadout(s); } }); } }
