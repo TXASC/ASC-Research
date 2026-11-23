@@ -563,6 +563,7 @@ const withTimeout = (p, ms) => Promise.race([p, new Promise((_,rej)=>setTimeout(
 let REFRESH_T = 0;
 function refreshAfterLayer(s){ clearTimeout(REFRESH_T); REFRESH_T = setTimeout(()=>{ if(s !== current) return; renderBrief(s); renderMatch(s); renderStatus(s); if(s.pin) renderListBtn(s); }, 120); }
 async function screenLayers(s, only){
+  if(s.sketch) s._settled = true; // a drawn outline has no parcel step to wait on: its layers report as they land
   const L = s.layers, ringsLL = s.rings.map(r=>r.map(s.P.i));
   const [x0,y0,x1,y1] = s.frame, a = s.P.i([x0,y0]), b = s.P.i([x1,y1]), env = [a[0],a[1],b[0],b[1]];
   const c = s.center, toFt = rr => rr.map(r=>r.map(s.P.f));
@@ -595,7 +596,8 @@ async function screenLayers(s, only){
       const ids = new Set(s.parcels.map(p=>p.oid));
       return {items: nb.filter(n=>!ids.has(n.oid)).slice(0,220).map(n=>({...n, rings:toFt(n.ringsLL)}))}; })
   ];
-  await Promise.all(tasks);
+  const run = Promise.all(tasks); s._run = run; await run;
+  if(s === current) renderStatus(s);
 }
 
 /* ===== Status / readout ===== */
@@ -1204,8 +1206,9 @@ function summary(s){ const L = s.layers, ok = k => L[k] && L[k].status==="ok", s
     line: ok("power") ? (L.power.nearest ? lineDistText(L.power.nearest.d, true) : `None within ${s.powerMi||CONFIG.powerRadiusMi} mi`) : null, kv: ok("power") && L.power.nearest ? L.power.nearest.kv : null,
     juris: ok("juris") ? (L.juris.text || (L.juris.name ? "City of "+L.juris.name : "Outside city limits")) : null,
     url: shareURL(s), date: new Date().toISOString().slice(0,10) }; }
-function addCurrentToList(){ if(!current) return false; if(current.pin){ toast("Pick a parcel or outline your tract first"); return false; }
-  if(!current.sample && STEPS.some(([k])=>k!=="parcel" && (!current.layers[k] || current.layers[k].status==="wait"))){ toast("Adding it as soon as the last layer is in"); const s = current; (s._all||Promise.resolve()).then(()=>{ if(s===current) addCurrentToList(); }); return false; } const sum = summary(current); LIST = LIST.filter(x=>x.key!==sum.key); LIST.push(sum); saveList(); $("#btnList").textContent = "On your short list"; toast("Added to your short list"); return true; }
+function addCurrentToList(tries = 0){ if(!current) return false; if(current.pin){ toast("Pick a parcel or outline your tract first"); return false; }
+  if(!current.sample && STEPS.some(([k])=>k!=="parcel" && (!current.layers[k] || current.layers[k].status==="wait"))){ if(tries >= 3 || !current._run){ toast("Wait for the screen to finish, then add it"); return false; }
+    toast("Adding it as soon as the last layer is in"); const s = current; s._run.then(()=>{ if(s===current) addCurrentToList(tries + 1); }); return false; } const sum = summary(current); LIST = LIST.filter(x=>x.key!==sum.key); LIST.push(sum); saveList(); $("#btnList").textContent = "On your short list"; toast("Added to your short list"); return true; }
 function renderList(){
   const t = $("#slTable"), n = LIST.length; $("#navCount").hidden = !n; $("#navCount").textContent = n; $("#slEmpty").hidden = !!n; $("#slNote").hidden = !n;
   if(!n){ t.innerHTML = ""; return; }
@@ -1517,7 +1520,7 @@ function init(){
     const o = e.target.closest("[data-open]"); if(o) screen(o.dataset.open); });
   $("#btnSavePdf").addEventListener("click", ()=>{ if(current){ setView("sheet"); drawSheet(current); } window.print(); });
   $("#btnShare").addEventListener("click", async ()=>{ if(!current) return; const u = shareURL(current); try { await navigator.clipboard.writeText(u); toast("Link copied. It re-runs the screen with today's public data."); } catch(e){ prompt("Copy this link", u); } });
-  $("#btnList").addEventListener("click", addCurrentToList);
+  $("#btnList").addEventListener("click", ()=>addCurrentToList());
   $("#slClear").addEventListener("click", ()=>{ LIST = []; saveList(); if(current) $("#btnList").textContent = "Add to short list"; });
   $("#slTable").addEventListener("click", e=>{ const b = e.target.closest("[data-rm]"); if(b){ LIST.splice(+b.dataset.rm,1); saveList(); } });
   $("#btnSketch").addEventListener("click", ()=>{ if(SKETCH) endSketch(); else startSketch(); });
