@@ -32,7 +32,18 @@ const CONFIG = {
   roads: ["https://overpass-api.de/api/interpreter"],
   // TxDOT roadway inventory with right-of-way width (ROW_MIN, feet), mostly state-maintained roads
   roadInv: "https://services.arcgis.com/KTcxiTD9dsQw4r7Z/arcgis/rest/services/TxDOT_Roadway_Inventory/FeatureServer/0",
-  powerRadiusMi: 2
+  powerRadiusMi: 2,
+  // County appraisal-district layers that carry the recorded deed reference the statewide feed leaves out.
+  // Each is read best effort, one point per parcel; a county not listed falls back to the legal description.
+  deeds: {
+    TARRANT: "https://mapit.tarrantcounty.com/arcgis/rest/services/Dynamic/TADParcels/FeatureServer/0",
+    COLLIN: "https://services2.arcgis.com/uXyoacYrZTPTKD3R/arcgis/rest/services/CCAD_Parcel_Feature_Set/FeatureServer/4",
+    DENTON: "https://geo.dentoncad.com/arcgis/rest/services/LandRecords/Parcels_Appraisal/FeatureServer/1",
+    HIDALGO: "https://gis.rgv911.org/server/rest/services/RGV911_Web_Apps_MIL1/MapServer/7",
+    DALLAS: "https://services2.arcgis.com/rwnOSbfKSwyTBcwN/arcgis/rest/services/DallasTaxParcels/FeatureServer/0"
+  },
+  // Parcel outlines for counties the statewide feed can miss: Hidalgo CAD parcels as published for the RGV 911 district
+  parcelFallback: [{county:"HIDALGO", box:[-98.6, 26.0, -97.85, 26.8], url:"https://gis.rgv911.org/server/rest/services/RGV911_Web_Apps_MIL1/MapServer/7"}]
 };
 
 /* ===== Choices ===== */
@@ -253,13 +264,35 @@ function normParcel(r){
   return { oid:a.OBJECTID, propId:a.PROP_ID, county:a.COUNTY, legal:a.LEGAL_DESC, legalAcres:+a.LEGAL_AREA || null,
     owner:ownerName(a.OWNER_NAME), situs:a.SITUS_ADDR ? fmtAddr(a.SITUS_ADDR) : null, source:a.SOURCE, taxYear:a.TAX_YEAR, ringsLL:rings };
 }
+/* county parcel layer used when the statewide feed has nothing at the point */
+const fallbackFor = p => (CONFIG.parcelFallback||[]).find(f => p.lng >= f.box[0] && p.lat >= f.box[1] && p.lng <= f.box[2] && p.lat <= f.box[3]);
+function normCounty(f, fb){ const a = {}; for(const [k,v] of Object.entries(f.attributes||{})) a[k.toLowerCase()] = (v === "Null" || v === "" || v == null) ? null : v;
+  const p = { oid:"c" + (a.objectid_12 ?? a.objectid ?? a.prop_id), propId:a.prop_id != null ? String(a.prop_id) : null, county:fb.county, legal:a.legal_desc, legalAcres:+a.land_acres || null,
+    owner:ownerName(a.file_as_name || a.owner_name), situs:a.situs ? fmtAddr(a.situs) : null, source:titleCase(fb.county) + " CAD", via:`${titleCase(fb.county)} County Appraisal District parcels, as published by the Rio Grande Valley 911 district`, taxYear:null, ringsLL:(f.geometry && f.geometry.rings) || [] };
+  const d = deedFrom(f.attributes); if(d) p.deed = d; return p; }
+async function fallbackQuery(fb, geom, gtype, ms){
+  const j = await getJSON(fb.url + "/query?" + qs({geometry:geom, geometryType:gtype, inSR:4326, spatialRel:"esriSpatialRelIntersects", outFields:"*", returnGeometry:true, outSR:4326,
+    geometryPrecision:7, maxAllowableOffset:0.000002, resultRecordCount:400, f:"json"}), {}, ms);
+  return (j.features||[]).map(f=>normCounty(f, fb)).filter(p=>p.ringsLL.length); }
 async function fetchParcelAt(p){
+  try { return await fetchParcelAtTx(p); }
+  catch(e){ const fb = fallbackFor(p); if(!fb) throw e; return (await fallbackQuery(fb, p.lng+","+p.lat, "esriGeometryPoint", 10000))[0] || null; }
+}
+async function fetchParcelAtTx(p){
   const d = 0.003, ext = [p.lng-d, p.lat-d, p.lng+d, p.lat+d].join(",");
   const j = await getJSON(CONFIG.parcels + "/identify?" + qs({geometry:p.lng+","+p.lat, geometryType:"esriGeometryPoint", sr:4326, layers:"all:0", tolerance:0,
     mapExtent:ext, imageDisplay:"600,600,96", returnGeometry:true, maxAllowableOffset:0.000002, f:"json"}));
-  const r = (j.results||[])[0]; return r ? normParcel(r) : null;
+  const r = (j.results||[])[0]; if(r) return normParcel(r);
+  const fb = fallbackFor(p); if(!fb) return null;
+  try { return (await fallbackQuery(fb, p.lng+","+p.lat, "esriGeometryPoint", 10000))[0] || null; } catch(_){ return null; }
 }
 async function fetchNeighbors(env, exceptOid){
+  const fb = fallbackFor({lng:(env[0]+env[2])/2, lat:(env[1]+env[3])/2});
+  let st; try { st = await fetchNeighborsTx(env, exceptOid); } catch(e){ if(!fb) throw e; st = []; }
+  if(st.length || !fb) return st;
+  return (await fallbackQuery(fb, env.join(","), "esriGeometryEnvelope", 14000)).filter(p=>p.oid !== exceptOid);
+}
+async function fetchNeighborsTx(env, exceptOid){
   const j = await getJSON(CONFIG.parcels + "/identify?" + qs({geometry:env.join(","), geometryType:"esriGeometryEnvelope", sr:4326, layers:"all:0", tolerance:0,
     mapExtent:env.join(","), imageDisplay:"800,800,96", returnGeometry:true, maxAllowableOffset:0.000004, f:"json"}), {}, 14000);
   const seen = new Set(); return (j.results||[]).map(normParcel).filter(p => { if(p.oid === exceptOid || !p.ringsLL.length || seen.has(p.oid)) return false; seen.add(p.oid); return true; });
@@ -365,15 +398,39 @@ async function fetchCity(p){
 const ownerName = v => { const t = String(v||"").replace(/\s+/g," ").trim(); return !t || /^(UNKNOWN|NONE|N\/A|CONFIDENTIAL|NULL)$/i.test(t) ? null : t.toUpperCase(); };
 // "D.R.D.C.T." style record abbreviations from the county name
 const countyAbbr = c => { const w = String(c||"").trim().toUpperCase().split(/\s+/).filter(Boolean); return w.length ? w.map(x=>x[0]).join(".") + "." : ""; };
-function deedRef(legal, county){ const r = parseLegal(legal), ca = countyAbbr(county);
-  if(r.instrument) return `INST. NO. ${r.instrument}` + (ca ? ` O.P.R.${ca}C.T.` : "");
-  if(r.volPage) return r.volPage.toUpperCase().replace("PG.","PG.") + (ca ? ` D.R.${ca}C.T.` : "");
+/* recorded deed reference: the county appraisal district's deed fields when read, else whatever the legal description carries */
+const blankNo = v => { const t = String(v == null ? "" : v).trim().toUpperCase(); return !t || /^0+$/.test(t) || /^(NULL|NONE|N\/A|UNKNOWN)$/.test(t) ? null : t; };
+function deedFrom(attrs){ if(!attrs) return null; const a = {}; for(const [k,v] of Object.entries(attrs)) a[k.toUpperCase()] = v;
+  const pick = re => { const k = Object.keys(a).find(k=>re.test(k)); return k ? blankNo(a[k]) : null; };
+  const inst = pick(/(^|[_.])(INSTRUMENT_?NO|INSTRUMENTNUM|DEED_?NUM)$/), vol = pick(/(^|[_.])(DEED_?BOOK|DEED_BOOK_ID|VOLUME|DEED_VOLUME)$/), pg = pick(/(^|[_.])(DEED_?PAGE|DEED_BOOK_PAG|PAGE|DEED_PAGE)$/);
+  if(inst) return {inst};
+  if(vol && pg) return {vol:vol.replace(/^0+(?=\d)/,""), pg:pg.replace(/^0+(?=\d)/,"")};
+  const legal = Object.keys(a).filter(k=>/^LEGAL_?\d$/.test(k)).sort().map(k=>a[k]||"").join(" ").trim();
+  if(legal){ const r = parseLegal(legal); if(r.instrument) return {inst:r.instrument}; if(r.vpRaw) return {vol:r.vpRaw[0], pg:r.vpRaw[1]}; }
   return null; }
+function deedRef(p, county){ if(!p) return null; const ca = countyAbbr(p.county || county), d = p.deed, r = d ? {} : parseLegal(p.legal);
+  const inst = d ? d.inst : r.instrument, vol = d ? d.vol : r.vpRaw && r.vpRaw[0], pg = d ? d.pg : r.vpRaw && r.vpRaw[1];
+  if(inst) return `INST. NO. ${inst}` + (ca ? ` O.P.R.${ca}C.T.` : "");
+  if(vol && pg) return `VOL. ${vol}, PG. ${pg}` + (ca ? ` D.R.${ca}C.T.` : "");
+  return null; }
+/* read the deed reference for the tract and its adjoiners from the county layer, a point inside each parcel */
+async function fetchDeed(s, p, url){ const ll = s.P.i(interiorPoint(p.rings || p.ringsLL.map(r=>r.map(s.P.f))));
+  const j = await getJSON(url + "/query?" + qs({geometry:ll[0].toFixed(7)+","+ll[1].toFixed(7), geometryType:"esriGeometryPoint", inSR:4326, spatialRel:"esriSpatialRelIntersects",
+    outFields:"*", returnGeometry:false, resultRecordCount:3, f:"json"}), {}, 8000);
+  for(const f of (j.features||[])){ const d = deedFrom(f.attributes); if(d) return d; } return null; }
+async function enrichDeeds(s, list){
+  const todo = list.filter(p=>p && !p.deed && !p._deedTried && CONFIG.deeds[String(p.county || s.county || "").toUpperCase()]); if(!todo.length) return false;
+  let got = 0, i = 0; const t0 = performance.now();
+  const worker = async () => { while(i < todo.length && performance.now()-t0 < 12000){ const p = todo[i++]; p._deedTried = true;
+    try { const d = await fetchDeed(s, p, CONFIG.deeds[String(p.county || s.county).toUpperCase()]); if(d){ p.deed = d; got++; } } catch(_){} } };
+  await Promise.all([worker(), worker(), worker(), worker()]); return got > 0; }
+/* "INST. NO. 2019… O.P.R.D.C.T." prints as two lines on the sheet, the record abbreviation under the number */
+const splitRecord = t => { const m = String(t).match(/^(.*?)\s+((?:O\.P|D|M|P)\.R\.[A-Z.]*C\.T\.)$/); return m ? [m[1], m[2]] : [t]; };
 function recordLines(p, county){ const r = parseLegal(p.legal), out = [];
   if(p.owner) out.push(p.owner);
   if(r.lot && r.block) out.push(`LOT ${r.lot}, BLOCK ${r.block}`); else if(p.legalAcres) out.push(`CALLED ${p.legalAcres.toFixed(p.legalAcres < 10 ? 3 : 2)} ACRES`);
   if(r.lot && r.block && r.addition) out.push(r.addition + (/ADDITION|ESTATES|SUBDIVISION|PHASE|PARK|HEIGHTS|VILLAGE/.test(r.addition) ? "" : " ADDITION"));
-  const d = deedRef(p.legal, p.county || county); if(d) out.push(d);
+  const d = deedRef(p, county); if(d) out.push(d);
   return out; }
 /* which neighbors share a boundary line with the tract: walk the tract's edges and measure how much of it runs along each neighbor */
 function findAdjoiners(s, items){ const step = 4, tol = 6, samples = [];
@@ -409,7 +466,8 @@ function parseLegal(txt){
   if((m = t.match(/\b(?:BLK|BLOCK)\s+([0-9A-Z\/\-]{1,8})/))) r.block = m[1];
   if((m = t.match(/\b(?:ABST?|ABSTRACT|A)[\s\-#]*(\d{1,5})\b/))) r.abstract = m[1];
   if((m = t.match(/\b(?:INT|INST|INSTR?|DOC|CC#?|CCF)[\s#:]*([0-9]{6,14}|[A-Z]?\d{3}-\d{5,7})/))) r.instrument = m[1];
-  if((m = t.match(/\bVOL(?:UME)?\s*(\d{1,6})[\s,]*(?:PG|PAGE)S?\s*(\d{1,5})/))) r.volPage = "Vol. " + m[1] + ", Pg. " + m[2];
+  if((m = t.match(/\bVOL(?:UME)?\.?\s*(\d{1,9})[\s,]*(?:PG|PAGE)S?\.?\s*(\d{1,5})/)) || (m = t.match(/\bVOL\.?\s*(\d{1,9})\s*\/\s*(\d{1,5})\b/))){
+    const v = m[1].replace(/^0+(?=\d)/,""), g = m[2].replace(/^0+(?=\d)/,""); r.vpRaw = [v, g]; r.volPage = "Vol. " + v + ", Pg. " + g; }
   if((m = t.match(/\b(?:CAB(?:INET)?|SLIDE|PLAT)\s+([A-Z0-9\-]+(?:\s*(?:SLIDE|PG)\s*[A-Z0-9\-]+)?)/))) r.plat = m[1];
   r.platted = !!(r.lot && r.block) || /\bADDN|ADDITION|SUBDIVISION|ESTATES|PHASE\b/.test(t);
   if((m = t.match(/^([A-Z0-9 '&\.\-]+?)\s+(?:BLK|BLOCK|LOT|LT|INST|PH|PHASE)\b/))) r.addition = m[1].replace(/\s+(ADDN|ADD)$/,"").trim();
@@ -574,7 +632,7 @@ function acreage(s){
   if(s.sample || s.pin) return {rows:[], gap:null};
   const rows = [[s.sketch ? "Your outline (GIS)" : "Drawn outline (GIS)", s.acres]];
   const feed = s.sketch ? null : s.parcels && s.parcels.length > 1 ? (s.parcels.every(p=>p.legalAcres) ? s.parcels.reduce((t,p)=>t+p.legalAcres,0) : null) : s.legalAcres;
-  if(feed) rows.push(["Roll acreage in the statewide parcel feed (TxGIO)", feed]);
+  if(feed) rows.push([s.parcels && s.parcels[0] && s.parcels[0].via ? "Roll acreage on the county appraisal record" : "Roll acreage in the statewide parcel feed (TxGIO)", feed]);
   if(s.parent) rows.push(["Parent parcel, drawn (GIS)", s.parent.acres]);
   let gap = null;
   if(feed){ const d = Math.abs(s.acres-feed), r = d/Math.max(s.acres, feed);
@@ -582,7 +640,7 @@ function acreage(s){
     else if(s.acres > feed*1.5) gap = `The outline draws about ${acTxt(s.acres)} acres against ${acTxt(feed)} on the roll.`;
     else if(r > 0.03 && d >= 0.1) gap = `The sources differ by about ${fmt(r*100,0)}% (${acTxt(d)} ac).`; }
   return {rows, gap}; }
-const acreLine = s => { const a = acreage(s); return a.rows.map(([l,v])=>`${l}: ${acTxt(v)} ac`).join(" · ") + (a.rows.length ? ` · ${s.county ? titleCase(s.county)+" County" : "County"} appraisal district record: not read by this screen` : ""); };
+const acreLine = s => { const a = acreage(s); return a.rows.map(([l,v])=>`${l}: ${acTxt(v)} ac`).join(" · ") + (a.rows.length && !(s.parcels && s.parcels[0] && s.parcels[0].via) ? ` · ${s.county ? titleCase(s.county)+" County" : "County"} appraisal district acreage: not read by this screen` : ""); };
 
 /* a pin that misses every parcel still gets a partial screen: the point layers, read for a small circle around the pin */
 const PIN_R = 300;
@@ -598,7 +656,7 @@ function siteFromSketch(ringFt, base){
   s.confirm = "part"; return s;
 }
 const yrs = (a,b) => { const y1 = a ? new Date(a).getUTCFullYear() : null, y2 = new Date(b).getUTCFullYear(); return y1 && y1 !== y2 ? y1 + "–" + y2 : String(y2); };
-const titleCase = t => String(t||"").toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());
+const titleCase = t => String(t||"").toLowerCase().replace(/\b\w/g,c=>c.toUpperCase()).replace(/\b(Cad|Txdot|Fema|Llc|Lp)\b/g, w=>w.toUpperCase());
 
 const JOB_BUDGET = 18000;
 const withTimeout = (p, ms) => Promise.race([p, new Promise((_,rej)=>setTimeout(()=>rej(new Error("out of time")), ms))]);
@@ -640,7 +698,10 @@ async function screenLayers(s, only){
       const items = nb.filter(n=>!ids.has(n.oid)).slice(0,220).map(n=>({...n, rings:toFt(n.ringsLL)}));
       markAdjoiners(s, items); return {items}; })
   ];
-  const run = Promise.all(tasks); s._run = run; await run;
+  // deed references from the county record, best effort; never part of the layer count
+  const deeds = (async () => { if(s.pin || s.sample || s.sketch) return; await Promise.all(tasks);
+    const list = [...(s.parcels||[]), ...adjoinersOf(s)]; if(await enrichDeeds(s, list) && s === current){ drawSheet(s); renderBrief(s); renderReadout(s); } })();
+  const run = Promise.all(tasks); s._run = run; await run; deeds.catch(()=>{});
   if(s === current) renderStatus(s);
 }
 
@@ -683,7 +744,7 @@ function roThumb(k, st){
   return s._th[key] = `<svg class="ro-th" viewBox="0 0 ${N} ${N}" width="${N}" height="${N}" aria-hidden="true">${o.join("")}</svg>`;
 }
 function readoutRow(k, label, value, sub, st){
-  const [ico, src, c] = RO_META[k] || ["sheet","",""], m = roMeter(k), sig = value + "|" + st, fresh = RO_PREV[k] !== undefined && RO_PREV[k] !== sig && st==="ok"; RO_PREV[k] = sig;
+  let [ico, src, c] = RO_META[k] || ["sheet","",""]; if(k==="parcel" && RO_S && RO_S.parcels && RO_S.parcels[0] && RO_S.parcels[0].via) src = titleCase(RO_S.parcels[0].county) + " CAD"; const m = roMeter(k), sig = value + "|" + st, fresh = RO_PREV[k] !== undefined && RO_PREV[k] !== sig && st==="ok"; RO_PREV[k] = sig;
   return `<li class="ro ${st}${fresh?" fresh":""}" style="--c:${c}"><span class="ro-ico" aria-hidden="true">${roThumb(k, st) || `<svg viewBox="0 0 24 24">${WF_ICO[ico]}</svg>`}<span class="st ${st}"></span></span><div class="ro-body"><div class="ro-k">${esc(label)}<span class="ro-src">${esc(src)}</span></div><div class="ro-v">${value}</div>${m?`<div class="ro-m" title="${esc(m.lab)}"><i style="width:${Math.max(2,Math.round(m.v*100))}%"></i></div>`:""}${sub?`<div class="ro-s">${sub}</div>`:""}</div></li>`; }
 function failText(l){ return !l || l.status==="wait" ? "Loading…" : l.status==="none" ? (l.noneText || "Nothing mapped here.") : l.status==="fail" ? "Not read this time" : ""; }
 async function retryMissing(only){ const s = current; if(!s) return; const keys = typeof only === "string" ? [only] : STEPS.map(x=>x[0]).filter(k=>k!=="parcel" && s.layers[k] && s.layers[k].status==="fail");
@@ -731,6 +792,42 @@ const DX = 14, DY = 14, DW = 786, DH = 772;    // drawing area
 const NX = 810, NW = 276;                      // notes column
 const TX = 1092, TW = 100;                     // title strip
 const SF = "IBM Plex Sans Condensed, Arial Narrow, sans-serif";
+/* ===== Leroy lettering =====
+   Map labels on ASC's plotted sheets are single-stroke uppercase lettering (the CAD "romans" style descended from the
+   Leroy template), in a fixed size scale: street names largest, then the tract, then record lines along the boundary.
+   Glyphs below are the public-domain Hershey Roman Simplex (s) and Duplex (d) strokes; cap height is 21 units. */
+const LEROY = {"s":{" ":"b","A":"d[FS[ [Fc[ VT`T","B":"gVFV[ VF_FbGcHdJdLcNbO_P VP_PbQcRdTdWcYbZ_[V[","C":"gdKcIaG_F[FYGWIVKUNUSVVWXYZ[[_[aZcXdV","D":"gVFV[ VF]F`GbIcKdNdScVbX`Z][V[","E":"eVFV[ VFcF VP^P V[c[","F":"dVFV[ VFcF VP^P","G":"gdKcIaG_F[FYGWIVKUNUSVVWXYZ[[_[aZcXdVdS _SdS","H":"hVFV[ dFd[ VPdP","I":"ZVFV[","J":"b^F^V]Y\\ZZ[X[VZUYTVTT","K":"gVFV[ dFVT [Od[","L":"cVFV[ V[b[","M":"jVFV[ VF^[ fF^[ fFf[","N":"hVFV[ VFd[ dFd[","O":"h[FYGWIVKUNUSVVWXYZ[[_[aZcXdVeSeNdKcIaG_F[F","P":"gVFV[ VF_FbGcHdJdMcObP_QVQ","Q":"h[FYGWIVKUNUSVVWXYZ[[_[aZcXdVeSeNdKcIaG_F[F ^Wd]","R":"gVFV[ VF_FbGcHdJdLcNbO_PVP ]Pd[","S":"fcIaG^FZFWGUIUKVMWNYO_QaRbScUcXaZ^[Z[WZUX","T":"bZFZ[ SFaF","U":"hVFVUWXYZ\\[^[aZcXdUdF","V":"dSF[[ cF[[","W":"jTFY[ ^FY[ ^Fc[ hFc[","X":"fUFc[ cFU[","Y":"dSF[P[[ cF[P","Z":"fcFU[ UFcF U[c[","0":"f[FXGVJUOURVWXZ[[][`ZbWcRcObJ`G]F[F","1":"fXJZI]F][","2":"fVKVJWHXGZF^F`GaHbJbLaN_QU[c[","3":"fWFbF\\N_NaObPcScUbX`Z][Z[WZVYUW","4":"f_FUTdT _F_[","5":"faFWFVOWNZM]M`NbPcScUbX`Z][Z[WZVYUW","6":"fbIaG^F\\FYGWJVOVTWXYZ\\[][`ZbXcUcTbQ`O]N\\NYOWQVT","7":"fcFY[ UFcF","8":"fZFWGVIVKWMYN]O`PbRcTcWbYaZ^[Z[WZVYUWUTVRXP[O_NaMbKbIaG^FZF","9":"fbMaP_R\\S[SXRVPUMULVIXG[F\\F_GaIbMbRaW_Z\\[Z[WZVX",".":"\\WYVZW[XZWY",",":"\\XZW[VZWYXZX\\W^V_","'":"\\WHVGWFXGXIWKVL","\"":"bVFVM ^F^M","(":"`]B[DYGWKVPVTWYY][`]b",")":"`UBWDYG[K\\P\\T[YY]W`Ub","-":"lVRhR","/":"hfBTb","&":"liOiNhMgMfNePcUaX_Z][Y[WZVYUWUUVSWR^N_M`K`I_G]F[GZIZK[N]QbXdZf[h[iZiY","#":"g]BVb cB\\b VOdO UUcU",":":"\\WMVNWOXNWM WYVZW[XZWY",";":"\\WMVNWOXNWM XZW[VZWYXZX\\W^V_","+":"l_I_[ VRhR","=":"lVOhO VUhU","%":"jgFU[ ZF\\H\\J[LYMWMUKUIVGXFZF\\G_HbHeGgF cTaU`W`Yb[d[fZgXgVeTcT"},"d":{" ":"b","A":"f\\FT[ \\IU[T[ \\Ic[d[ \\Fd[ WUaU VVbV","B":"fVFV[ WGWZ VF^FaGbHcJcMbOaP^Q WG^GaHbJbMaO^P WP^PaQbRcTcWbYaZ^[V[ WQ^QaRbTbWaY^ZWZ","C":"gdKcIaG_F[FYGWIVKUNUSVVWXYZ[[_[aZcXdV dKcKbIaH_G[GYHWKVNVSWVYY[Z_ZaYbXcVdV","D":"gVFV[ WGWZ VF]F`GbIcKdNdScVbX`Z][V[ WG]G`HaIbKcNcSbVaX`Y]ZWZ","E":"eVFV[ WGWZ VFbF WGbGbF WP]P]Q WQ]Q WZbZb[ V[b[","F":"dVFV[ WGW[V[ VFbF WGbGbF WP]P]Q WQ]Q","G":"gdKcIaG_F[FYGWIVKUNUSVVWXYZ[[_[aZcXdVdR_R dKcKbIaH_G[GYHXIWKVNVSWVXXYY[Z_ZaYbXcVcS_S_R","H":"hVFV[ VFWFW[V[ dFcFc[d[ dFd[ WPcP WQcQ","I":"[VFV[W[ VFWFW[","J":"c^F^V]Y[ZYZWYVVUV ^F_F_V^Y]Z[[Y[WZVYUV","K":"gVFV[W[ VFWFW[ dFcFWR dFWS ZOc[d[ [Od[","L":"cVFV[ VFWFWZ WZbZb[ V[b[","M":"jVFV[ WKW[V[ WK^[ VF^X fF^X eK^[ eKe[f[ fFf[","N":"hVFV[ WIW[V[ WId[ VFcX cFcX cFdFd[","O":"h[FYGWIVKUNUSVVWXYZ[[_[aZcXdVeSeNdKcIaG_F[F \\GYHWKVNVSWVYY\\Z^ZaYcVdSdNcKaH^G\\G","P":"fVFV[ WGW[V[ VF_FaGbHcJcMbOaP_QWQ WG_GaHbJbMaO_PWP","Q":"h[FYGWIVKUNUSVVWXYZ[[_[aZcXdVeSeNdKcIaG_F[F \\GYHWKVNVSWVYY\\Z^ZaYcVdSdNcKaH^G\\G ^Xc]d] ^X_Xd]","R":"fVFV[ WGW[V[ VF^FaGbHcJcMbOaP^QWQ WG^GaHbJbMaO^PWP \\Qb[c[ ]Qc[","S":"fcIaG^FZFWGUIUKVMWNYO^Q`RaSbUbXaY^ZZZXYWXUX cIaI`H^GZGWHVIVKWMYN^P`QbScUcXaZ^[Z[WZUX","T":"cZGZ[ [G[[Z[ TFaFaG TFTGaG","U":"hVFVUWXYZ\\[^[aZcXdUdF VFWFWUXXYY\\Z^ZaYbXcUcFdF","V":"fTF\\[ TFUF\\X dFcF\\X dF\\[","W":"lTFZ[ TFUFZX _FZX _IZ[ _Id[ _FdX jFiFdX jFd[","X":"fUFb[c[ UFVFc[ cFbFU[ cFV[U[","Y":"eTF[P[[\\[ TFUF\\P cFbF[P cF\\P\\[","Z":"fbFU[ cFV[ UFcF UFUGbG VZcZc[ U[c[","0":"f[FXGVJUOURVWXZ[[][`ZbWcRcObJ`G]F[F YGWJVOVRWWYZ XY[Z]Z`Y _ZaWbRbOaJ_G `H]G[GXH","1":"fXJZI]F][ XJXKZJ\\H\\[][","2":"fVKVJWHXGZF^F`GaHbJbLaN_QV[ VKWKWJXHZG^G`HaJaL`N^QU[ VZcZc[ U[c[","3":"fWFbF[O WFWGaG aFZO [N]N`ObQcTcUbX`Z][Z[WZVYUWVW ZO]O`PbS ^OaQbTbUaX^Z bV`Y]ZZZWYVW YZVX","4":"f_I_[`[ `F`[ `FUVdV _IVV VUdUdV","5":"fWFVO XGWN WFaFaG XGaG WNZM]M`NbPcScUbX`Z][Z[WZVYUWVW VOWOYN]N`ObR ^NaPbSbUaX^Z bV`Y]ZZZWYVW YZVX","6":"f`GaIbIaG^F\\FYGWJVOVTWXYZ\\[][`ZbXcUcTbQ`O]N\\NYOWQ aH^G\\GYH ZGXJWOWTXX[Z WVYY\\Z]Z`YbV ^ZaXbUbTaQ^O bS`P]O\\OYPWS [OXQWT","7":"fUFcFY[ UFUGbG bFX[Y[","8":"fZFWGVIVKWMXNZO^P`QaRbTbWaY^ZZZWYVWVTWRXQZP^O`NaMbKbIaG^FZF XGWIWKXMZN^O`PbRcTcWbYaZ^[Z[WZVYUWUTVRXPZO^N`MaKaI`G aH^GZGWH VXYZ _ZbX","9":"faP_R\\S[SXRVPUMULVIXG[F\\F_GaIbMbRaW_Z\\[Z[WZVXWXXZ aM`P]R aN_Q\\R[RXQVN ZRWPVMVLWIZG VKXH[G\\G_HaK ]G`IaMaR`W^Z _Y\\ZZZWY",".":"]WXVYVZW[X[YZYYXXWX WYWZXZXYWY",",":"]YZX[W[VZVYWXXXYYY\\X^V_ WYWZXZXYWY X[Y\\ YZX^","'":"]YHXIWIVHVGWFXFYGYJXLVM WGWHXHXGWG XIYJ YHXL","\"":"dWFVGVM WGVM WFXGVM `F_G_M `G_M `FaG_M","(":"`\\BZDXGVKUPUTVYX]Z`\\b]b \\B]B[DYGWKVPVTWYY][`]b",")":"`UBWDYG[K\\P\\T[YY]W`UbVb UBVBXDZG\\K]P]T\\YZ]X`Vb","-":"kVQgQgR VQVRgR","/":"ifBTbUb fBgBUb","&":"khMfMdNcPaV`X_Y]ZYZWYVWVUWSXR]O_M`K`I_G]F\\FZGYIYKZN\\QaWdZf[h[ hMhNfNdO eNdPbVaX_Z][Y[WZVYUWUUVSXQ]N^M_K_I^G _H]G\\GZH [GZIZK[N]QbWdYfZhZh[","#":"g]FVb cF\\b VQdQ UWcW",":":"]WMVNVOWPXPYOYNXMWM WNWOXOXNWN WXVYVZW[X[YZYYXXWX WYWZXZXYWY",";":"]WMVNVOWPXPYOYNXMWM WNWOXOXNWN YZX[W[VZVYWXXXYYY\\X^V_ WYWZXZXYWY X[Y\\ YZX^","+":"k^I^Z_Z ^I_I_Z VQgQgR VQVRgR","=":"kVMgMgN VMVNgN VUgUgV VUVVgV","%":"jgFU[ ZF\\H\\J[LYMWMUKUIVGXFZF\\G_HbHeGgF cTaU`W`Yb[d[fZgXgVeTcT"}};
+const LEROY_W = {s:0, d:0};
+function leroyPath(str, cap, face="s"){
+  const G = LEROY[face], k = cap/21; let x = 0, d = "";
+  for(const ch of String(str).toUpperCase()){
+    if(ch === "°"){ const r = 2.6*k; const cx = x+3*k+r, cy = -cap+r; for(let i=0;i<=12;i++){ const t = i/12*2*Math.PI; d += (i?"L":"M") + (cx+r*Math.cos(t)).toFixed(2) + " " + (cy+r*Math.sin(t)).toFixed(2); } x += 9*k; continue; }
+    if(ch === "±"){ const cx = x+8*k; const P = (a,b) => a.toFixed(2) + " " + b.toFixed(2); d += `M${P(cx,-17*k)}L${P(cx,-5*k)}M${P(cx-6*k,-11*k)}L${P(cx+6*k,-11*k)}M${P(cx-6*k,0)}L${P(cx+6*k,0)}`; x += 16*k; continue; }
+    const g = G[ch] || G[ch === "…" ? "." : " "]; if(!g){ x += 16*k; continue; }
+    const w = g.charCodeAt(0) - 82;
+    for(const st of g.slice(1).split(" ")){ if(!st) continue;
+      for(let i=0;i<st.length;i+=2){ const px = x + (st.charCodeAt(i)-82)*k, py = (st.charCodeAt(i+1)-82-9)*k; d += (i?"L":"M") + px.toFixed(2) + " " + py.toFixed(2); } }
+    x += w*k; }
+  return {d, w:x}; }
+/* a centered stack of lettered lines; each line is [text, cap height, face]. Returns svg and its box. */
+function leroyBlock(x, y, lines, {rot=0, ink="#111", halo="#fff", haloW=2.6} = {}){
+  const L = lines.map(([t, cap, face]) => ({...leroyPath(t, cap, face), cap, face}));
+  const gap = l => l.cap*0.62, H = L.reduce((t,l,i)=>t + l.cap + (i ? gap(l) : 0), 0), W = Math.max(...L.map(l=>l.w));
+  let yy = -H/2, d = "", dd = "";
+  L.forEach((l,i)=>{ if(i) yy += gap(l); yy += l.cap; const tx = -l.w/2;
+    const p = l.d.replace(/([ML])(-?[\d.]+) (-?[\d.]+)/g, (m, c, a, b) => c + (+a+tx).toFixed(2) + " " + (+b+yy).toFixed(2));
+    if(l.face === "d") dd += p; else d += p; });
+  const sw = c => Math.max(.55, c*0.11), cs = Math.min(...L.map(l=>l.cap)), cd = Math.max(...L.map(l=>l.cap));
+  const tf = `translate(${x.toFixed(1)} ${y.toFixed(1)})${rot ? ` rotate(${rot.toFixed(1)})` : ""}`;
+  const svg = `<g transform="${tf}" fill="none" stroke-linecap="round" stroke-linejoin="round" pointer-events="none" class="leroy">`
+    + (halo ? `<path d="${d+dd}" stroke="${halo}" stroke-width="${(sw(cd)+haloW).toFixed(2)}" opacity=".92"/>` : "")
+    + (d ? `<path d="${d}" stroke="${ink}" stroke-width="${sw(cs).toFixed(2)}"/>` : "")
+    + (dd ? `<path d="${dd}" stroke="${ink}" stroke-width="${(sw(cd)*1.25).toFixed(2)}"/>` : "") + `</g>`;
+  return {svg, w:W, h:H}; }
+const leroyWidth = (t, cap, face="s") => leroyPath(t, cap, face).w;
+/* the sheet's lettering scale, in sheet units (cap height): one step apart, like L80 / L100 / L120 / L175 */
+const LS = {rec:4.6, row:4.8, tractSub:5.6, tract:8.4, street:9.4};
+
 function sheetXform(s){ const [x0,y0,x1,y1] = s.frame, k = DW/(x1-x0); return { k, X:x=>DX+(x-x0)*k, Y:y=>DY+(y1-y)*k, inv:(px,py)=>[x0+(px-DX)/k, y1-(py-DY)/k] }; }
 function pathOf(rings, T, close=true){ return rings.map(r=>r.map((p,i)=>(i?"L":"M")+T.X(p[0]).toFixed(1)+" "+T.Y(p[1]).toFixed(1)).join("")+(close?"Z":"")).join(""); }
 function niceStep(span){ const raw=span/5, p=Math.pow(10,Math.floor(Math.log10(raw))); for(const m of [1,2,2.5,5,10]) if(m*p>=raw) return m*p; return 10*p; }
@@ -822,10 +919,15 @@ function drawSheet(s){
   if(aerialOn && !probe) o.push(`<path d="${pathOf(s.rings,T)}" fill="none" stroke="#921A1D" stroke-width="1.2" pointer-events="none"/>`);
   if(s.added.length) for(const p of s.parcels) o.push(`<path class="adjp sel" data-oid="${esc(p.oid)}" d="${pathOf(p.ringsLL.map(r=>r.map(s.P.f)),T)}" fill="rgba(146,26,29,.001)" stroke="#921A1D" stroke-width=".9" stroke-dasharray="3 3"/>`);
   { const [cx,cy] = interiorPoint(s.rings), lc = aerialOn ? "#fff" : ink, ls = aerialOn ? "#111" : halo;
-  const lbl = s.pin ? ["AREA READ AROUND YOUR PIN", `${PIN_R}-FT RADIUS · NOT A PARCEL`] : [`${acTxt(s.acres)} ACRES ±`, `(${fmt(sig2(s.areaSqft),0)} SQ. FT. ±)`, s.sample ? "SAMPLE TRACT" : s.sketch ? "SKETCHED OUTLINE" : s.added.length ? "APPRAISAL PARCELS (COMBINED)" : "APPRAISAL PARCEL"];
-  const r = s.refs || {}; if(r.lot || r.block) lbl.push([r.lot&&"LOT "+r.lot, r.block&&"BLOCK "+r.block].filter(Boolean).join(", ")); if(s.propId && !s.added.length) lbl.push("APPRAISAL ID " + s.propId);
-  if(!s.pin && !s.sample && !s.sketch && s.parcels && s.parcels.length === 1){ const p0 = s.parcels[0], d = deedRef(p0.legal, p0.county || s.county); if(p0.owner) lbl.push(p0.owner.length > 40 ? p0.owner.slice(0,39)+"…" : p0.owner); if(d) lbl.push(d); }
-  o.push(`<text x="${T.X(cx).toFixed(1)}" y="${(T.Y(cy)-lbl.length*5).toFixed(1)}" font-family="${SF}" text-anchor="middle" fill="${lc}" paint-order="stroke" stroke="${ls}" stroke-width="3" pointer-events="none">${lbl.map((l,i)=>`<tspan x="${T.X(cx).toFixed(1)}" dy="${i?12:0}" font-size="${i===0?12.5:8.6}" font-weight="${i===0?600:400}">${esc(l)}</tspan>`).join("")}</text>`); }
+  // lettered as on ASC's sheets: record lines first, then the acreage one step larger
+  const rec = [], r = s.refs || {};
+  if(!s.pin && !s.sample && !s.sketch && s.parcels && s.parcels.length === 1){ const p0 = s.parcels[0]; if(p0.owner) rec.push(p0.owner.length > 40 ? p0.owner.slice(0,39)+"…" : p0.owner); }
+  if(r.lot || r.block) rec.push([r.lot&&"LOT "+r.lot, r.block&&"BLOCK "+r.block].filter(Boolean).join(", "));
+  if(!s.pin && !s.sample && !s.sketch && s.parcels && s.parcels.length === 1){ const d = deedRef(s.parcels[0], s.county); if(d) rec.push(...splitRecord(d)); }
+  const lbl = s.pin ? [["AREA READ AROUND YOUR PIN", LS.tractSub], [`${PIN_R}-FT RADIUS - NOT A PARCEL`, LS.rec]]
+    : [...rec.map(t=>[t, LS.rec]), [`${acTxt(s.acres)} ACRES ±`, LS.tract, "d"], [`(${fmt(sig2(s.areaSqft),0)} SQ. FT. ±)`, LS.tractSub],
+       [s.sample ? "SAMPLE TRACT" : s.sketch ? "SKETCHED OUTLINE" : s.added.length ? "APPRAISAL PARCELS (COMBINED)" : "APPRAISAL PARCEL" + (s.propId ? " " + s.propId : ""), LS.rec]];
+  o.push(leroyBlock(T.X(cx), T.Y(cy), lbl, {ink:lc, halo:ls}).svg); }
   if(SKETCH && SKETCH.pts.length){ o.push(`<path d="${pathOf([SKETCH.pts],T,SKETCH.pts.length>2)}" fill="rgba(146,26,29,.12)" stroke="#921A1D" stroke-width="2" stroke-dasharray="6 3"/>`);
     for(const p of SKETCH.pts) o.push(`<circle cx="${T.X(p[0])}" cy="${T.Y(p[1])}" r="4" fill="#921A1D"/>`); }
   o.push(`<g transform="translate(${DX+DW/2} ${DY+DH/2}) rotate(-30)" font-family="${SF}" font-weight="600" text-anchor="middle" fill="${aerialOn?"#fff":"#921A1D"}" opacity="${aerialOn?.22:.09}" pointer-events="none"><text font-size="64" y="-12" letter-spacing="10">PRELIMINARY</text><text font-size="38" y="40" letter-spacing="12">NOT A SURVEY</text></g>`);
@@ -842,19 +944,19 @@ function sheetLabels(s, T, aerialOn){
   const o = [], boxes = [], L = s.layers, fill = aerialOn ? "#fff" : "#333", stroke = aerialOn ? "#111" : "#fff";
   const inDraw = (x,y,w,h) => x-w/2 > DX+6 && x+w/2 < DX+DW-6 && y-h/2 > DY+30 && y+h/2 < DY+DH-6;
   const free = (x,y,w,h) => !boxes.some(b => Math.abs(b[0]-x) < (b[2]+w)/2+3 && Math.abs(b[1]-y) < (b[3]+h)/2+2);
-  { const [cx,cy] = interiorPoint(s.rings); boxes.push([T.X(cx), T.Y(cy), 150, 64]); }
-  const block = (x, y, lines, size, rot) => { const lh = size*1.32;
-    o.push(`<text transform="translate(${x.toFixed(1)} ${y.toFixed(1)})${rot?` rotate(${rot.toFixed(1)})`:""}" font-family="${SF}" font-size="${size}" text-anchor="middle" fill="${fill}" paint-order="stroke" stroke="${stroke}" stroke-width="2.4" pointer-events="none">${lines.map((l,i)=>`<tspan x="0" y="${((i-(lines.length-1)/2)*lh + size*0.35).toFixed(1)}">${esc(l)}</tspan>`).join("")}</text>`); };
+  { const [cx,cy] = interiorPoint(s.rings); boxes.push([T.X(cx), T.Y(cy), 170, 84]); }
+  const block = (x, y, lines, rot) => o.push(leroyBlock(x, y, lines, {rot, ink:fill, halo:stroke}).svg);
+  const boxOf = lines => { const b = leroyBlock(0, 0, lines); return [b.w + 6, b.h + 5]; };
   // adjoiners: only parcels that share a boundary line with the tract
   const A = L.adj;
   if(LAYER_ON.adj && A && A.status==="ok" && !s.pin && !s.sample){
-    for(const n of adjoinersOf(s).slice(0,12)){ const lines = recordLines(n, s.county).map(l=>l.length > 34 ? l.slice(0,33)+"…" : l); if(!lines.length) continue;
-      const size = 6.6, w = Math.max(...lines.map(l=>l.length))*size*0.5 + 6, h = lines.length*size*1.32 + 2;
+    for(const n of adjoinersOf(s).slice(0,12)){ const lines = recordLines(n, s.county).flatMap(splitRecord).map(l=>[l.length > 34 ? l.slice(0,33)+"…" : l, LS.rec]); if(!lines.length) continue;
+      const [w, h] = boxOf(lines);
       const [mx,my,ux,uy] = n.adjMid, eps = 3, nrm = inRings(mx - uy*eps, my + ux*eps, n.rings) ? [-uy, ux] : [uy, -ux];
       let placed = false;
       for(const k of [1, 1.7, 2.5]){ const off = (Math.abs(nrm[0])*w/2 + Math.abs(nrm[1])*h/2 + 8)*k/T.k, x = mx + nrm[0]*off, y = my + nrm[1]*off, X = T.X(x), Y = T.Y(y);
-        if(inRings(x, y, n.rings) && !inTract(s, x, y) && inDraw(X, Y, w, h) && free(X, Y, w, h)){ boxes.push([X, Y, w, h]); block(X, Y, lines, size); placed = true; break; } }
-      if(!placed){ const [cx,cy] = interiorPoint(n.rings), X = T.X(cx), Y = T.Y(cy); if(inDraw(X, Y, w, h) && free(X, Y, w, h)){ boxes.push([X, Y, w, h]); block(X, Y, lines, size); } } } }
+        if(inRings(x, y, n.rings) && !inTract(s, x, y) && inDraw(X, Y, w, h) && free(X, Y, w, h)){ boxes.push([X, Y, w, h]); block(X, Y, lines); placed = true; break; } }
+      if(!placed){ const [cx,cy] = interiorPoint(n.rings), X = T.X(cx), Y = T.Y(cy); if(inDraw(X, Y, w, h) && free(X, Y, w, h)){ boxes.push([X, Y, w, h]); block(X, Y, lines); } } } }
   // roads: one label per named road, on its centerline near the tract, with R.O.W. width when known
   const rd = L.road; s._roadLabels = [];
   if(LAYER_ON.road && rd && rd.status==="ok" && rd.roads.length && !s.sample){
@@ -868,12 +970,12 @@ function sheetLabels(s, T, aerialOn){
       let w = null, src = null;
       for(const r of (s._rowRec||[])) for(let i=0;i<r.path.length-1;i++) if(segDist(c.x, c.y, r.path[i], r.path[i+1]) < 60){ w = r.w; src = "TxDOT"; break; }
       if(!w){ w = scaledRow(c.x, c.y, c.ux, c.uy, ringsList); if(w) src = "scaled"; }
-      const lines = [c.name, w ? (src === "TxDOT" ? `(${w}' R.O.W. PER TxDOT)` : `(±${w}' R.O.W. SCALED)`) : null].filter(Boolean);
+      const lines = [[c.name, LS.street, "d"], w ? [src === "TxDOT" ? `(${w}' R.O.W. PER TXDOT)` : `(±${w}' R.O.W. SCALED)`, LS.row] : null].filter(Boolean);
       let ang = Math.atan2(-c.uy, c.ux)*180/Math.PI; if(ang > 90) ang -= 180; if(ang < -90) ang += 180;
-      const size = 7.4, tw = Math.max(...lines.map(l=>l.length))*size*0.52 + 6, th = lines.length*size*1.32, X = T.X(c.x), Y = T.Y(c.y);
+      const [tw, th] = boxOf(lines), X = T.X(c.x), Y = T.Y(c.y);
       const bw = Math.abs(Math.cos(ang*Math.PI/180))*tw + Math.abs(Math.sin(ang*Math.PI/180))*th, bh = Math.abs(Math.sin(ang*Math.PI/180))*tw + Math.abs(Math.cos(ang*Math.PI/180))*th;
       if(!inDraw(X, Y, bw, bh) || !free(X, Y, bw, bh)) continue;
-      boxes.push([X, Y, bw, bh]); block(X, Y, lines, size, ang); s._roadLabels.push({name:c.name, row_ft:w, row_src:src}); } }
+      boxes.push([X, Y, bw, bh]); block(X, Y, lines, ang); s._roadLabels.push({name:c.name, row_ft:w, row_src:src}); } }
   return o.join(""); }
 function notesColumn(s, T){
   const o = [], L = s.layers, f = L.flood, t = L.terrain, w = L.wet, wa = L.water, so = L.soils, pw = L.power, j = L.juris;
@@ -1057,10 +1159,10 @@ function renderBrief(s){ if(s===current) setTimeout(updRec, 0);
   const L = s.layers, rec = recommend(s), rows = [];
   const row = (k, finding, limit, src, st) => rows.push(`<tr><td class="k">${k}</td><td>${st==="ok"?pinWords(s,finding):`<span class="na">${st==="wait"?"Loading.":st==="none"?"Nothing mapped.":"Not read this time."}</span> ${st==="none"?esc(failText(L[KEYOF[k]])):""}`}<div class="limit">${limit}</div></td><td class="src">${src}</td></tr>`);
   const st = k => L[k] ? L[k].status : "wait";
-  row("Parcel", s.pin ? `No appraisal parcel at the pin (${s.center.lat.toFixed(6)}, ${s.center.lng.toFixed(6)}). The layers below were read for ${PIN_R} ft around it; they describe that circle, not a tract.` : `${s.sample?acTxt(s.acres)+" acres (illustrative)":esc(acreLine(s))}.${acreage(s).gap?` <b>${esc(acreage(s).gap)}</b>`:""} ${s.legal?esc(s.legal):""}${!s.sketch && s.parcels && s.parcels.length ? " Owner of record: " + esc(s.parcels.map(p=>p.owner||"not listed").join("; ")) + "." : ""}${!s.sketch && s.parcels && s.parcels.length === 1 && deedRef(s.parcels[0].legal, s.county) ? " Deed: " + esc(deedRef(s.parcels[0].legal, s.county).replace(/\.$/,"")) + "." : ""}${s.parent?` Outline is part of appraisal parcel ${esc(s.parent.propId||"")}.`:""}`, "An appraisal map, drawn for taxes. Lines can be off by tens of feet. Not a boundary. Acreage by source; the county appraisal district's own record was not read.", s.sample?"Illustrative sample":esc(s.pin?"TxGIO StratMap Land Parcels (no match)":`TxGIO StratMap Land Parcels, from ${titleCase(s.source||"county appraisal district")}${s.taxYear?", tax year "+s.taxYear:""}`), "ok");
+  row("Parcel", s.pin ? `No appraisal parcel at the pin (${s.center.lat.toFixed(6)}, ${s.center.lng.toFixed(6)}). The layers below were read for ${PIN_R} ft around it; they describe that circle, not a tract.` : `${s.sample?acTxt(s.acres)+" acres (illustrative)":esc(acreLine(s))}.${acreage(s).gap?` <b>${esc(acreage(s).gap)}</b>`:""} ${s.legal?esc(s.legal):""}${!s.sketch && s.parcels && s.parcels.length ? " Owner of record: " + esc(s.parcels.map(p=>p.owner||"not listed").join("; ")) + "." : ""}${!s.sketch && s.parcels && s.parcels.length === 1 && deedRef(s.parcels[0], s.county) ? " Deed: " + esc(deedRef(s.parcels[0], s.county).replace(/\.$/,"")) + "." : ""}${s.parent?` Outline is part of appraisal parcel ${esc(s.parent.propId||"")}.`:""}`, "An appraisal map, drawn for taxes. Lines can be off by tens of feet. Not a boundary. Acreage by source.", s.sample?"Illustrative sample":esc(s.pin?"TxGIO StratMap Land Parcels (no match)":s.parcels && s.parcels[0] && s.parcels[0].via ? s.parcels[0].via + (s.parcels[0].deed ? "; deed reference from the same record" : "") : `${s.parcels && s.parcels.some(p=>p.deed) ? "Deed reference from the county appraisal district record; outline from " : ""}TxGIO StratMap Land Parcels, from ${titleCase(s.source||"county appraisal district")}${s.taxYear?", tax year "+s.taxYear:""}`), "ok");
   if(!s.pin && !s.sample){ const adj = adjoinersOf(s), st0 = L.adj ? (L.adj.status==="ok" ? "ok" : L.adj.status) : "wait";
     row("Adjoiners", adj.length ? `<ul class="adj-list">${adj.slice(0,20).map(n=>`<li>${esc(recordLines(n, s.county).join(" · ") || "Owner not listed")}${n.propId?` <span class="opt">(ID ${esc(n.propId)})</span>`:""}</li>`).join("")}</ul>` : "No neighboring appraisal parcel shares a mapped line with the tract.",
-      "Parcels whose appraisal-map lines run along the tract's line for 20 ft or more. Owner and record from the appraisal roll; deed references appear only where the roll's legal description carries them. A survey confirms the actual adjoiners from the deeds.", "TxGIO StratMap Land Parcels (county appraisal rolls)", st0==="none"?"ok":st0); }
+      "Parcels whose appraisal-map lines run along the tract's line for 20 ft or more. Owner and record from the appraisal roll; deed references from the county appraisal district record where it publishes them, otherwise from the legal description. A survey confirms the actual adjoiners from the deeds.", "TxGIO StratMap Land Parcels (county appraisal rolls)", st0==="none"?"ok":st0); }
   const f = L.flood; row("Floodplain", f&&f.status==="ok"?`${f.shareSFHA>0.005?`About ${fmt(f.shareSFHA*100,0)}% inside the mapped 1% annual-chance floodplain; approximately ${fmt((1-f.shareSFHA)*100,0)}% outside mapped floodplain.`:floodOut(f)+"."}${f.shareFloodway>0.005?` About ${fmt(f.shareFloodway*100,0)}% in mapped floodway.`:""} Zones touching the tract: ${f.zonesOnTract.length?esc(f.zonesOnTract.join(", ")):"X (minimal)"}.${floodFlags(f).map(x=>` <b>${esc(x)}</b>`).join("")}`:"",
     "Percentages are an approximation from an aligned FEMA map overlay, not an on-the-ground elevation survey.", s.sample?"Illustrative sample":`FEMA National Flood Hazard Layer, queried ${today()}${f&&f.panel?` (study ${esc(f.panel)})`:""}`, st("flood"));
   const w = L.wet; row("Wetlands", w&&w.status==="ok"?(w.share>0.002?`About ${fmt(w.share*100,1)}% of the tract is mapped as ${esc(w.typesOnTract.join(", ").toLowerCase()||"wetland or water")}.`:w.nearby?"None mapped on the tract. Mapped features nearby are drawn on the sheet.":"None mapped on or near the tract."):"",
@@ -1351,7 +1453,7 @@ async function submitRequest(e){
     acreage: s ? acreage(s).rows.map(([l,v])=>({source:l, acres:+v.toFixed(3)})) : [], acreage_gap: s ? acreage(s).gap : null,
     road_touch: L.road && L.road.status==="ok" ? L.road.touches : null, access_verified: false,
     owner: s && s.parcels && s.parcels.length ? s.parcels.map(p=>p.owner||null) : null,
-    adjoiners: s && !s.pin && !s.sample ? adjoinersOf(s).slice(0,40).map(n=>({prop_id:n.propId||null, owner:n.owner||null, legal:clip(n.legal,300), deed:deedRef(n.legal, n.county||s.county), shared_ft:Math.round(n.adjoins)})) : [],
+    adjoiners: s && !s.pin && !s.sample ? adjoinersOf(s).slice(0,40).map(n=>({prop_id:n.propId||null, owner:n.owner||null, legal:clip(n.legal,300), deed:deedRef(n, s.county), shared_ft:Math.round(n.adjoins)})) : [],
     roads: s && s._roadLabels ? s._roadLabels : [] };
   const row = { kind:"request", goal:(d.proposal?"packet+proposal:":"packet:")+STAGE, site_type:TYPE || (s&&s.sample?s.type:null), survey: rec ? (rec.pri===SURVEYS.none ? (rec.add?rec.add.key:"unsure") : rec.pri.key) : null,
     location: clip(siteRef, 400), lat: s ? +s.center.lat.toFixed(6) : null, lng: s ? +s.center.lng.toFixed(6) : null, acres: s && !s.pin ? +s.acres.toFixed(2) : null,
