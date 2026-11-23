@@ -212,6 +212,21 @@ function sampleShare(rings, test, n=110){ // share of the polygon area where tes
 // a tract can be one parcel or several (an assemblage); overlapping parcels are counted once
 const partsOf = s => s.parts && s.parts.length ? s.parts : [s.rings];
 function inTract(s, x, y){ return partsOf(s).some(rs=>inRings(x,y,rs)); }
+/* Public polygons can be county-sized (one FEMA zone X shape ran to 218,000 vertices). Every polygon is clipped to the
+   sheet frame and thinned before any math or drawing, so the work per layer stays small whatever a service returns. */
+function clipRing(r, [x0,y0,x1,y1]){
+  const edges = [[p=>p[0]>=x0, (a,b)=>[x0, a[1]+(b[1]-a[1])*(x0-a[0])/(b[0]-a[0])]], [p=>p[0]<=x1, (a,b)=>[x1, a[1]+(b[1]-a[1])*(x1-a[0])/(b[0]-a[0])]],
+    [p=>p[1]>=y0, (a,b)=>[a[0]+(b[0]-a[0])*(y0-a[1])/(b[1]-a[1]), y0]], [p=>p[1]<=y1, (a,b)=>[a[0]+(b[0]-a[0])*(y1-a[1])/(b[1]-a[1]), y1]]];
+  let out = r[0] && r[r.length-1] && r[0][0]===r[r.length-1][0] && r[0][1]===r[r.length-1][1] ? r.slice(0,-1) : r.slice();
+  for(const [inside, cut] of edges){ if(!out.length) break; const src = out; out = [];
+    for(let i=0;i<src.length;i++){ const a = src[i], b = src[(i+1)%src.length], ia = inside(a), ib = inside(b);
+      if(ia){ out.push(a); if(!ib) out.push(cut(a,b)); } else if(ib) out.push(cut(a,b)); } }
+  if(out.length < 3) return null; out.push(out[0]); return out; }
+const MAX_RING = 4000;
+function thinRing(r){ if(r.length <= MAX_RING) return r; const k = Math.ceil(r.length/MAX_RING), o = r.filter((_,i)=>i%k===0); o.push(r[r.length-1]); return o; }
+function fitRings(rings, frame){ const [x0,y0,x1,y1] = frame, px = (x1-x0)*0.25, py = (y1-y0)*0.25, box = [x0-px, y0-py, x1+px, y1+py];
+  return rings.map(r=>{ const [a,b,c,d] = bbox([r]); if(c < box[0] || a > box[2] || d < box[1] || b > box[3]) return null;
+    const inside = a >= box[0] && c <= box[2] && b >= box[1] && d <= box[3]; return thinRing(inside ? r : clipRing(r, box) || []); }).filter(r=>r && r.length >= 4); }
 function tractShare(s, test, n=110){ const [x0,y0,x1,y1]=bbox(s.rings), dx=(x1-x0)/n, dy=(y1-y0)/n; let tot=0, hit=0;
   for(let i=0;i<n;i++) for(let j=0;j<n;j++){ const x=x0+(i+.5)*dx, y=y0+(j+.5)*dy; if(!inTract(s,x,y)) continue; tot++; if(test(x,y)) hit++; }
   return tot ? hit/tot : 0; }
@@ -679,13 +694,13 @@ async function screenLayers(s, only){
     if(s !== current) return; setStatus(key, L[key].status==="none" ? "na" : L[key].status); renderReadout(s); drawSheet(s); renderInsights(s); if(key==="adj") renderMatch(s);
     if(s._settled) refreshAfterLayer(s); };
   const tasks = [
-    job("flood", async()=>{ const f = await fetchFlood(env, [c.lng,c.lat]); const polys = f.polys.map(p=>({...p, rings:toFt(p.ringsLL)}));
+    job("flood", async()=>{ const f = await fetchFlood(env, [c.lng,c.lat]); const polys = f.polys.map(p=>({...p, rings:fitRings(toFt(p.ringsLL), s.frame)})).filter(p=>p.rings.length);
       // an empty answer means no FEMA map here, which is not the same as outside the floodplain
-      const fs = polys.length ? floodStats(s, polys) : null;
+      const fs = floodStats(s, polys);
       if((!polys.length || fs.cover < 0.02) && !f.pointZone) return {_status:"none", polys:[], noneText:"No FEMA flood map covers this area (unmapped, not cleared)", firm:f.firm};
       return {polys, pointZone:f.pointZone, panel:f.panel, firm:f.firm, ...fs}; }),
-    job("wet", async()=>{ const w = await fetchWetlands(env); const polys = w.map(p=>({...p, rings:toFt(p.ringsLL)})); return {polys, ...wetStats(s, polys)}; }),
-    job("water", async()=>{ const w = await fetchWater(env); const items = w.map(i=>({name:i.name, paths:i.paths?toFt(i.paths):null, rings:i.ringsLL?toFt(i.ringsLL):null}));
+    job("wet", async()=>{ const w = await fetchWetlands(env); const polys = w.map(p=>({...p, rings:fitRings(toFt(p.ringsLL), s.frame)})).filter(p=>p.rings.length); return {polys, ...wetStats(s, polys)}; }),
+    job("water", async()=>{ const w = await fetchWater(env); const items = w.map(i=>({name:i.name, paths:i.paths?toFt(i.paths):null, rings:i.ringsLL?fitRings(toFt(i.ringsLL), s.frame):null}));
       return waterStats(s, items); }),
     job("soils", async()=>({units: await fetchSoils(ringsLL)})),
     job("terrain", async()=>{ const g = await fetchTerrain(s); const st = terrainStats(s, g); if(!st.ok) throw new Error("no elevation cells on the tract"); return {grid:g, ...st}; }),
@@ -1296,7 +1311,7 @@ async function screen(raw, {quiet=false}={}){
         guide(s.pin ? "No parcel at that pin. Results below are for the area around it." : "Results are below.", "ok"); } }
     else { safeReplace(null, "", location.pathname + "?" + qs({loc:raw, ...(TYPE?{type:TYPE}:{}) , stage:STAGE})); guide("Sample opened. It is illustrative, so try a real site next.", "ok"); }
     return s;
-  } catch(e){
+  } catch(e){ try { console.warn("screen failed", e && e.stack); } catch(_){}
     if(my !== RUN) return null;
     // fail closed: no stale exhibit from another site stays on screen
     current = null; $("#results").hidden = true; $("#sheetWrap").classList.remove("scanning"); resetMonitor();
@@ -1723,7 +1738,7 @@ function init(){
     if(SKETCH){ const [px,py] = svgPoint(e); if(px<DX||px>DX+DW||py<DY||py>DY+DH) return; SKETCH.pts.push(sheetXform(SKETCH.base).inv(px,py)); updSketch(); return; }
     const p = e.target.closest(".adjp"); if(p) toggleNeighbor(p.dataset.oid);
   });
-  document.addEventListener("click", e=>{ const b = e.target.closest(".pick"); if(!b) return; if(SKETCH) endSketch(); screen(b.dataset.ll); });
+  document.addEventListener("click", e=>{ const b = e.target.closest(".pick"); if(!b) return; if(SKETCH) endSketch(); b.classList.add("on"); toast("Opening that parcel…"); screen(b.dataset.ll); });
   $("#matchBox").addEventListener("click", e=>{ const b = e.target.closest("[data-m]"); if(b) onMatch(b.dataset.m); });
   $("#btnProposal").addEventListener("click", ()=>{ const r = $('#reqForm input[name="want"][value="proposal"]'); if(r){ r.checked = true; updWant(); } });
   $("#reqForm").addEventListener("change", e=>{ if(e.target.name === "want") updWant(); if(e.target.name === "tract" && current){ current.confirm = e.target.value; renderMatch(current); } });
