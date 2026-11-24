@@ -19,3 +19,15 @@ A free, preliminary public-record screen for Texas land: appraisal parcel and ne
 - Nothing downloads or prints from the public page. The full packet is requested with contact details and emailed by ASC. Requests insert into `snapshot_requests` (kind `request`, goal `packet:<stage>` or `packet+proposal:<stage>`, plus `company`, `note`, `wants_proposal` and a `packet` JSON with the share link and short list). `packet_status` defaults to `pending`. The anonymous role can insert but cannot read rows.
 - Staff: open the share link from a request with `&staff=1` to unlock the brief and print the packet (11x17 landscape, sheet then brief). This is a front-end switch, not security; automatic sending needs a server-side function.
 - `noindex,nofollow` until an ASC-domain launch is approved. Add `?dry=1` (or start the name with `TEST`) to walk the packet request without writing a row.
+
+## Plat Planner preview (`/plat/`)
+
+A free plat and replat planner. The visitor enters a location and a plain-language goal (combine, split, move a line, first plat, subdivide, correct). The page reads city limits and the appraisal record, picks the likely plat type (platted lot vs. acreage tract from the legal description), and lays out the path:
+
+- **Tier 1 (City of Dallas):** dated steps from the city's 2026 Plat Submittal Calendar (submittal window, agenda notice, comments due, City Plan Commission), with a target-hearing picker. Dates after 12/17/2026 are projected from the 2026 rhythm and labeled "Projected" until the city publishes its next calendar. Add the new rows to `DALLAS_2026` in `plat/planner.js` each year.
+- **Tier 2 (another city):** the Texas plat sequence and the Chapter 212 30-day / 15-day clock.
+- **Tier 3 (outside city limits):** county or ETJ path.
+- Coverage: within ~115 straight-line miles of Dallas, Austin, Houston, Waco, Midland or Sherman; farther out still accepts a request.
+- "What to gather" checklist (owner side / ASC / city) with have / need help / you pull it marks, and a "Start my plat" request that inserts into `snapshot_requests` (kind `request`, goal `plat:<goal>`, site_type `plat`, timing = target CPC date, `packet` JSON with city, tier, plat type, target and checklist marks).
+- `?demo=1` uses a sample Dallas lot with no lookups; `?dry=1` (or a name starting TEST) sends nothing. `noindex,nofollow`.
+- Pure logic lives in `plat/planner.js` (tests: `node --test tests/planner.test.js`).

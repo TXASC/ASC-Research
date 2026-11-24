@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Plat Planner | Adams Surveying Company</title>
+<meta name="description" content="Plan a plat or replat in Texas: the plat type, the City of Dallas submittal and City Plan Commission dates, and the paperwork to gather before you file. From Adams Surveying Company.">
+<link rel="icon" type="image/png" sizes="64x64" href="../screen/img/favicon.png">
+<link rel="apple-touch-icon" href="../screen/img/apple-touch.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@100..125,400..900&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="plat.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[
+{"@type":"Question","name":"What is a replat?","acceptedAnswer":{"@type":"Answer","text":"A replat redraws all or part of a recorded plat, for example to combine two lots into one or split a lot into two. It replaces only the portion being replatted and is approved and recorded like any plat."}},
+{"@type":"Question","name":"How long does a plat take in Dallas?","acceptedAnswer":{"@type":"Answer","text":"Dallas accepts plat applications on published Wednesday and Thursday submittal dates, and the City Plan Commission hears them about four weeks later. Survey and drawing come before that, and conditions, signatures and county recording come after. The paperwork owners gather is what most often sets the pace."}},
+{"@type":"Question","name":"Do I need a plat to get a building permit?","acceptedAnswer":{"@type":"Answer","text":"Many Texas cities, including Dallas, issue building permits only on a platted lot of record. Land described by metes and bounds or as an acreage tract often needs a plat first."}},
+{"@type":"Question","name":"What is the difference between a preliminary plat and a final plat?","acceptedAnswer":{"@type":"Answer","text":"A preliminary plat lays out lots, streets and utilities so engineering plans can be designed and approved. The final plat is the document that is signed and recorded at the county once those conditions are met."}},
+{"@type":"Question","name":"How long does a Texas city have to act on a plat?","acceptedAnswer":{"@type":"Answer","text":"Under Texas Local Government Code Chapter 212, as amended in 2023, a city must approve, approve with conditions, or disapprove a complete plat application within 30 days of filing. If conditions are given, the applicant can respond and the city then has 15 days to act on the response."}}
+]}
+</script>
+</head>
+<body>
+<a class="skip" href="#plan">Skip to the plat planner</a>
+
+<header class="hdr" id="hdr">
+  <div class="hdr-in">
+    <a class="brand" href="https://txasc-c4b03fc922e0177f01298f114a33dce1.webflow.io/" aria-label="Adams Surveying Company home"><img src="../screen/img/logo.png" alt="Adams Surveying Company" width="140" height="54"></a>
+    <nav class="nav" aria-label="Main">
+      <a href="https://txasc-c4b03fc922e0177f01298f114a33dce1.webflow.io/services">Survey Services</a>
+      <a href="https://txasc-c4b03fc922e0177f01298f114a33dce1.webflow.io/projects">Projects</a>
+      <a href="https://txasc-c4b03fc922e0177f01298f114a33dce1.webflow.io/about">About</a>
+      <a href="#plan" aria-current="page">Platting</a>
+    </nav>
+    <div class="hdr-act">
+      <a class="tel" href="tel:+14693170250"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/></svg>(469) 317-0250</a>
+      <a class="btn btn-red" href="#start">Start my plat</a>
+    </div>
+  </div>
+</header>
+
+<main>
+<section class="hero" aria-labelledby="h1">
+  <img class="hero-img" src="../screen/img/hero.jpg" alt="" width="1920" height="1080" fetchpriority="high">
+  <div class="hero-reel" id="heroReel" aria-hidden="true"></div>
+  <div class="hero-shade"></div>
+
+  <div class="hero-in">
+    <div class="hero-copy">
+      <p class="eyebrow"><span class="dot"></span>Plat planner for Texas land</p>
+      <h1 id="h1">Know your plat path <span class="accent">before you file.</span></h1>
+      <p class="lede">A plat runs on a fixed sequence of dates, reviews and signatures, and what slows one down is usually a missing paper, not the drawing. Tell us where the land is and what you want to do. You'll see the plat type, the city's filing and hearing dates, and the list to start gathering today.</p>
+
+      <form class="planner" id="plan" autocomplete="off" novalidate>
+        <label class="fl" for="loc">Where is the land?</label>
+        <div class="loc-row">
+          <input id="loc" name="loc" type="text" inputmode="search" placeholder="Address, map pin link or coordinates" required>
+        </div>
+        <fieldset class="goals">
+          <legend class="fl">What do you want to do?</legend>
+          <div class="goal-grid" id="goalGrid"></div>
+        </fieldset>
+        <div class="plan-act">
+          <button class="btn btn-red btn-lg" id="go" type="submit">Plan my plat <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+          <span class="status" id="status" role="status" aria-live="polite"></span>
+        </div>
+      </form>
+    </div>
+
+    <aside class="next-card" aria-labelledby="nextH">
+      <p class="mono-k">City of Dallas · next filing windows</p>
+      <h2 id="nextH" class="sr">Next Dallas plat filing windows</h2>
+      <p class="next-proj" id="nextProj" hidden>2027 dates projected from the city's 2026 calendar until Dallas publishes the next one.</p>
+      <ol class="next-list" id="nextList"></ol>
+      <p class="next-foot">Plat applications are accepted Wednesday and Thursday until 4:30 PM. The City Plan Commission meets Thursdays at 12:30 PM.</p>
+    </aside>
+  </div>
+</section>
+
+<section class="result" id="result" hidden aria-labelledby="resH">
+  <div class="wrap">
+    <div class="res-head">
+      <div>
+        <p class="kicker">Your plat path</p>
+        <h2 id="resH"></h2>
+        <p class="res-sub" id="resSub"></p>
+      </div>
+      <dl class="facts" id="facts"></dl>
+    </div>
+
+    <div class="type-card" id="typeCard"></div>
+
+    <div class="target" id="targetBox" hidden>
+      <label for="target">Target hearing</label>
+      <select id="target"></select>
+      <p class="target-note" id="targetNote"></p>
+    </div>
+
+    <ol class="path" id="path"></ol>
+  </div>
+</section>
+
+<section class="papers" id="papers" hidden aria-labelledby="papH">
+  <div class="wrap">
+    <p class="kicker">Before you file</p>
+    <h2 id="papH">What to gather, and who handles what</h2>
+    <p class="sec-lede">Mark what you already have. Anything you are missing, we help you find or start, and the items marked "we can pull it" come from public record.</p>
+    <div class="ready">
+      <div class="ready-bar"><span id="readyFill"></span></div>
+      <p id="readyTxt"></p>
+    </div>
+    <div class="cols">
+      <div class="col">
+        <h3><span class="who who-you">You</span> Owner side</h3>
+        <ul class="docs" id="docsYou"></ul>
+      </div>
+      <div class="col">
+        <h3><span class="who who-asc">ASC</span> We prepare</h3>
+        <ul class="docs" id="docsAsc"></ul>
+        <h3 class="mt"><span class="who who-city">City</span> Review and record</h3>
+        <ul class="docs" id="docsCity"></ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="start" id="start" aria-labelledby="startH">
+  <div class="wrap start-in">
+    <div>
+      <p class="kicker light">Start my plat</p>
+      <h2 id="startH">Send us the land and what you have.</h2>
+      <p class="sec-lede light">We review the record, confirm the plat type with the city's rules, and reply with a proposal and a dated plan built from your checklist. A licensed surveyor (RPLS) reviews and seals every plat we prepare.</p>
+      <ul class="start-sum" id="startSum"></ul>
+    </div>
+    <form class="start-form" id="startForm" novalidate>
+      <div class="f2">
+        <label>Name<input name="name" required maxlength="200" autocomplete="name"></label>
+        <label>Company <span class="opt">(optional)</span><input name="company" maxlength="200" autocomplete="organization"></label>
+      </div>
+      <div class="f2">
+        <label>Email<input name="email" type="email" required maxlength="320" autocomplete="email"></label>
+        <label>Phone<input name="phone" type="tel" maxlength="40" autocomplete="tel"></label>
+      </div>
+      <label>You are the
+        <select name="role">
+          <option value="owner">Owner</option><option value="buyer">Buyer under contract</option><option value="builder">Builder or developer</option>
+          <option value="engineer">Engineer or architect</option><option value="agent">Broker or agent</option><option value="other">Other</option>
+        </select>
+      </label>
+      <label>Anything we should know <span class="opt">(optional)</span><textarea name="note" rows="3" maxlength="1000" placeholder="What you plan to build, a permit date you are working toward, a lender involved..."></textarea></label>
+      <button class="btn btn-red btn-lg" type="submit" id="send">Start my plat</button>
+      <p class="form-msg" id="formMsg" role="status" aria-live="polite"></p>
+    </form>
+  </div>
+</section>
+
+<section class="faq" aria-labelledby="faqH">
+  <div class="wrap">
+    <p class="kicker">Platting questions</p>
+    <h2 id="faqH">Straight answers about plats in Texas</h2>
+    <div class="faq-grid">
+      <details open><summary>What is a replat?</summary><p>A replat redraws all or part of a recorded plat, for example to combine two lots into one or split a lot into two. It replaces only the portion being replatted and is approved and recorded like any plat.</p></details>
+      <details><summary>How long does a plat take in Dallas?</summary><p>Dallas accepts plat applications on published Wednesday and Thursday submittal dates, and the City Plan Commission hears them about four weeks later. Survey and drawing come before that; conditions, signatures and county recording come after. The owner paperwork is what most often sets the pace, which is why the checklist above starts on day one.</p></details>
+      <details><summary>Do I need a plat to get a building permit?</summary><p>Many Texas cities, Dallas included, issue building permits only on a platted lot of record. Land described by metes and bounds or as an acreage tract often needs a plat first.</p></details>
+      <details><summary>What is the difference between a preliminary and a final plat?</summary><p>A preliminary plat lays out lots, streets and utilities so the engineering plans can be designed and approved. The final plat is the document that is signed and recorded at the county once those conditions are met.</p></details>
+      <details><summary>How long does a Texas city have to act on a plat?</summary><p>Under Local Government Code Chapter 212, as amended in 2023, a city must approve, approve with conditions, or disapprove a complete plat application within 30 days of filing. If conditions are given, the applicant can respond and the city has 15 days to act on the response.</p></details>
+      <details><summary>Where do you plat?</summary><p>Dallas-Fort Worth and across Texas, with regular work within about two hours of Dallas, Austin, Houston, Waco, Midland and Sherman. The Dallas guide on this page has the full city calendar; for other cities we pull the calendar and checklist when we start.</p></details>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="ftr">
+  <div class="wrap ftr-in">
+    <p>Adams Surveying Company · Texas Board of Professional Engineers and Land Surveyors firm no. 10177500</p>
+    <p>Dates come from the City of Dallas plat submittal calendar. Dates after it are projected from the city's 2026 rhythm until the next calendar is published.</p>
+  </div>
+</footer>
+
+<script src="planner.js"></script>
+<script src="plat.js"></script>
+</body>
+</html>
