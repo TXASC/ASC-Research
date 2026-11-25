@@ -352,9 +352,8 @@ async function parcelByAddress(c, p){ const d = 0.0018, env = [c.lng-d, c.lat-d,
   hits.sort((m,n)=>Math.hypot(...centroid(m.ringsLL.map(r=>r.map(P.f)))) - Math.hypot(...centroid(n.ringsLL.map(r=>r.map(P.f))))); return hits[0]; }
 /* condo and stacked accounts repeat one outline many times; keep one per outline and note the other owners */
 function dedupeParcels(list){ const by = new Map();
-  for(const p of list){ const r = p.ringsLL && p.ringsLL[0] || [], bb = bbox(p.ringsLL || []);
-    const key = bb.map(v=>v.toFixed(5)).join(",") + ":" + r.length, hit = by.get(key);
-    if(!hit){ by.set(key, {...p, owners:p.owner ? [p.owner] : []}); continue; }
+  for(const p of list){ const key = (p.ringsLL || []).map(r=>r.map(v=>v[0].toFixed(6)+","+v[1].toFixed(6)).join(";")).join("|"), hit = key ? by.get(key) : null;
+    if(!hit){ by.set(key || Symbol(), {...p, owners:p.owner ? [p.owner] : []}); continue; }
     if(p.owner && !hit.owners.includes(p.owner)) hit.owners.push(p.owner);
     hit.stacked = (hit.stacked || 1) + 1; }
   return [...by.values()].map(q=>{ if(q.owners.length > 1) q.owner = `${q.owners[0]} + ${q.owners.length-1} MORE`; delete q.owners; return q; }); }
@@ -446,7 +445,7 @@ async function fetchLines(c, mi){
 }
 async function fetchRoads(envLL, n){
   if(!n){ const j = await getJSON(CONFIG.roadsTx + "/query?" + qs({geometry:envLL.join(","), geometryType:"esriGeometryEnvelope", inSR:4326, spatialRel:"esriSpatialRelIntersects",
-      outFields:"RTE_NM,MAP_LBL", returnGeometry:true, outSR:4326, geometryPrecision:6, maxAllowableOffset:0.00001, resultRecordCount:1500, f:"json"}), {}, 9000);
+      outFields:"RTE_NM,MAP_LBL", returnGeometry:true, outSR:4326, geometryPrecision:6, maxAllowableOffset:0.00001, resultRecordCount:1500, f:"json"}), {}, 9000, {tries:1}); // the job's next attempt falls back to OpenStreetMap
     const nm = a => { const v = nul(a.MAP_LBL) || nul(a.RTE_NM); return v ? titleCase(String(v)) : null; };
     const out = []; for(const f of (j.features||[])) if(f.geometry && f.geometry.paths) for(const p of f.geometry.paths) if(p.length > 1) out.push({name:nm(f.attributes||{}), pathLL:p});
     out.src = "TxDOT"; return out; }
@@ -501,8 +500,10 @@ async function fetchDeed(s, p, src){ const rings = p.rings || p.ringsLL.map(r=>r
     const inside = (j.features||[]).filter(f=>f.geometry && inRings(...s.P.f([f.geometry.x, f.geometry.y]), rings));
     // the account with a current appraisal year and a deed reference wins; condo and stacked accounts share one parcel
     inside.sort((m,n)=>((n.attributes||{}).AppraisalYr||0) - ((m.attributes||{}).AppraisalYr||0));
+    const legalOf = at => [at.Legal1, at.Legal2, at.Legal3].map(v=>String(v||"").trim()).filter(Boolean).join(" ") || null;
+    const withLegal = inside.find(f=>legalOf(f.attributes||{})); if(withLegal) p.rollLegal = legalOf(withLegal.attributes);
     for(const f of inside){ const at = f.attributes||{}, d = deedFrom(at); if(!d) continue;
-      d.src = src.label; d.yr = at.AppraisalYr || null; d.legal = [at.Legal1, at.Legal2, at.Legal3].map(v=>String(v||"").trim()).filter(Boolean).join(" ") || null; d.accounts = inside.length; return d; }
+      d.src = src.label; d.yr = at.AppraisalYr || null; d.legal = legalOf(at); d.accounts = inside.length; return d; }
     return null; }
   const ll = s.P.i(interiorPoint(rings));
   const j = await getJSON(src.url + "/query?" + qs({geometry:ll[0].toFixed(7)+","+ll[1].toFixed(7), geometryType:"esriGeometryPoint", inSR:4326, spatialRel:"esriSpatialRelIntersects",
@@ -520,7 +521,9 @@ async function enrichDeeds(s, list){
   const todo = list.filter(p=>p && !p.deed && !p._deedTried && deedSrcOf(p.county || s.county)); if(!todo.length) return false;
   let got = 0, i = 0; const t0 = performance.now();
   const worker = async () => { while(i < todo.length && performance.now()-t0 < 12000){ const p = todo[i++]; p._deedTried = true;
-    try { const d = await fetchDeed(s, p, deedSrcOf(p.county || s.county)); if(d){ p.deed = d; if(!p.legal && d.legal) p.legal = d.legal; got++; } } catch(_){} } };
+    try { const d = await fetchDeed(s, p, deedSrcOf(p.county || s.county)); if(d) p.deed = d;
+      const lg = (d && d.legal) || p.rollLegal; if(!p.legal && lg){ p.legal = lg; p.legalFromRoll = true; }
+      if(d || p.legalFromRoll) got++; } catch(_){} } };
   await Promise.all([worker(), worker(), worker(), worker()]); return got > 0; }
 /* "INST. NO. 2019… O.P.R.D.C.T." prints as two lines on the sheet, the record abbreviation under the number */
 const splitRecord = t => { const m = String(t).match(/^(.*?)\s+((?:O\.P|D|M|P)\.R\.[A-Z.]*C\.T\.)$/); return m ? [m[1], m[2]] : [t]; };
@@ -1351,7 +1354,8 @@ function deedLine(s){ const p = s.parcels[0], d = deedRef(p, s.county);
   if(d) return ` Deed: ${d.replace(/\.$/,"")}${p.deed && p.deed.date ? `, dated ${p.deed.date}` : ""}.`;
   if(p._deedTried && deedSrcOf(s.county)) return " Deed reference: not published on the current appraisal record. Ask us and we will pull it.";
   return ""; }
-function deedSourceText(s){ const d = s.parcels && s.parcels.map(p=>p.deed).find(Boolean); if(!d) return "";
+function deedSourceText(s){ const d = s.parcels && s.parcels.map(p=>p.deed).find(Boolean);
+  if(!d) return s.parcels && s.parcels.some(p=>p.legalFromRoll) ? `Legal description from ${(deedSrcOf(s.county)||{}).label || "the county appraisal district record"}; ` : "";
   return `Deed reference from ${d.src || "the county appraisal district record"}${d.yr ? `, appraisal year ${d.yr}` : ""}; `; }
 const platLine = pl => `City plat record (reference only): ${titleCase(pl.name)}${pl.lot ? `, lot ${pl.lot}` : ""}${pl.block ? `, block ${pl.block}` : ""}${pl.doc ? `, county document ${pl.doc}` : ""}${pl.status ? ` (${pl.status})` : ""}.`;
 

@@ -66,7 +66,7 @@ test("address guard: the house next door does not count as a match", () => {
 });
 
 test("stacked condo records collapse to one neighbor with the other owners noted", () => {
-  const F = load(["bbox", "dedupeParcels"]);
+  const F = load(["dedupeParcels"]);
   const ring = [[[-97.37,32.75],[-97.369,32.75],[-97.369,32.751],[-97.37,32.75]]];
   const list = ["A","B","C","D","E","F","G"].map((o,i)=>({oid:i, propId:"1460-5-16", owner:"OWNER " + o, ringsLL:ring}));
   list.push({oid:9, propId:"1460-5-17", owner:"NEXT DOOR", ringsLL:[[[-97.369,32.75],[-97.368,32.75],[-97.368,32.751],[-97.369,32.75]]]});
@@ -105,4 +105,15 @@ test("map reads do not retry a bad request", async () => {
     ["ARC_RE", "fetchOnce", "retryable", "getJSON"].map(cut).join("\n") + "\nthis.__ = {getJSON};", ctx);
   await assert.rejects(ctx.__.getJSON("https://example.test/a/query?f=json"));
   assert.equal(n, 1);
+});
+
+test("two different parcels with the same box and vertex count stay separate", () => {
+  const F = load(["dedupeParcels"]);
+  const a = {oid:1, propId:"A", owner:"WEST", ringsLL:[[[0,0],[1,0],[0,1],[0,0]]]}, b = {oid:2, propId:"B", owner:"EAST", ringsLL:[[[1,0],[1,1],[0,1],[1,0]]]};
+  const out = F.dedupeParcels([a, b]);
+  assert.equal(out.length, 2); assert.equal(out[0].owner, "WEST"); assert.equal(out[1].owner, "EAST");
+});
+
+test("TxDOT roads get one try so the OpenStreetMap fallback keeps its time", () => {
+  assert.match(SRC, /resultRecordCount:1500, f:"json"\}\), \{\}, 9000, \{tries:1\}\)/);
 });
