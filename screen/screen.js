@@ -40,8 +40,15 @@ const CONFIG = {
     COLLIN: "https://services2.arcgis.com/uXyoacYrZTPTKD3R/arcgis/rest/services/CCAD_Parcel_Feature_Set/FeatureServer/4",
     DENTON: "https://geo.dentoncad.com/arcgis/rest/services/LandRecords/Parcels_Appraisal/FeatureServer/1",
     HIDALGO: "https://gis.rgv911.org/server/rest/services/RGV911_Web_Apps_MIL1/MapServer/7",
-    DALLAS: "https://services2.arcgis.com/rwnOSbfKSwyTBcwN/arcgis/rest/services/DallasTaxParcels/FeatureServer/0"
+    // Dallas: the City of Dallas copy of the Dallas CAD roll, one point per tax account, current appraisal year.
+    // Legal1-3 carry the legal description and Legal4 the deed ("INT201700146408 DD05192017 CO-DC").
+    // (The older DallasTaxParcels layer stopped at appraisal year 2019 and is no longer read.)
+    DALLAS: {url:"https://egis.dallascityhall.com/arcgis/rest/services/Crm_public/CrmLayers/MapServer/0", points:true,
+      fields:"AccountID,AppraisalYr,Legal1,Legal2,Legal3,Legal4,Owner1", label:"Dallas CAD tax account roll (City of Dallas map service)"}
   },
+  // City of Dallas plat parcels: recorded and pending plats with the county document number. Reference only:
+  // the city calls the layer incomplete, so a miss says nothing.
+  dallasPlats: "https://services2.arcgis.com/rwnOSbfKSwyTBcwN/ArcGIS/rest/services/Plats/FeatureServer/4",
   // Parcel outlines for counties the statewide feed can miss: Hidalgo CAD parcels as published for the RGV 911 district
   parcelFallback: [{county:"HIDALGO", box:[-98.6, 26.0, -97.85, 26.8], url:"https://gis.rgv911.org/server/rest/services/RGV911_Web_Apps_MIL1/MapServer/7"}]
 };
@@ -83,18 +90,36 @@ const cacheKey = (url, opt) => opt && opt.body ? "https://cache.asc.invalid/post
 async function cacheGet(key){ try { if(!self.caches) return null; const c = await caches.open(CACHE_NAME), r = await c.match(key); if(!r) return null;
   if(Date.now() - (+r.headers.get("x-at")||0) > CACHE_TTL){ c.delete(key); return null; } return r; } catch(_){ return null; } }
 async function cachePut(key, body, type){ try { if(!self.caches) return; const c = await caches.open(CACHE_NAME); await c.put(key, new Response(body, {headers:{"content-type":type, "x-at":String(Date.now())}})); } catch(_){} }
-async function getJSON(url, opt={}, ms=12000, {cache=true}={}){
-  const key = cacheKey(url, opt);
-  if(cache){ const hit = await cacheGet(key); if(hit){ try { return await hit.json(); } catch(_){} } }
+/* Public map services drop requests now and then (a busy server, a rate limit answered without CORS headers,
+   which the browser reports as a network error). Each read gets up to three tries with a short, jittered backoff.
+   ArcGIS query and identify reads switch to a form POST after a network error or when the URL is long: a plain
+   form POST needs no CORS preflight and carries no URL-length limit. */
+const ARC_RE = /\/(query|identify|findAddressCandidates)\?/;
+async function fetchOnce(url, opt, ms, post){
   const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), ms);
   try {
-    const r = await fetch(url, {...opt, signal: ctl.signal});
-    if(!r.ok) throw new Error("HTTP " + r.status);
+    let r;
+    if(post){ const i = url.indexOf("?"); r = await fetch(url.slice(0, i), {method:"POST", body:new URLSearchParams(url.slice(i+1)), signal:ctl.signal}); }
+    else r = await fetch(url, {...opt, signal: ctl.signal});
+    if(!r.ok) throw Object.assign(new Error("HTTP " + r.status), {status:r.status});
     const txt = await r.text(), j = JSON.parse(txt);
-    if(j && j.error) throw new Error(j.error.message || "service error");
-    if(cache) cachePut(key, txt, "application/json");
-    return j;
+    if(j && j.error){ const c = +j.error.code || 0; throw Object.assign(new Error(j.error.message || "service error"), {status:c, service:true}); }
+    return {j, txt};
   } finally { clearTimeout(t); }
+}
+const retryable = e => !e.status || e.status === 429 || e.status >= 500 || e.name === "AbortError";
+async function getJSON(url, opt={}, ms=12000, {cache=true, tries=3}={}){
+  const key = cacheKey(url, opt);
+  if(cache){ const hit = await cacheGet(key); if(hit){ try { return await hit.json(); } catch(_){} } }
+  const arc = ARC_RE.test(url) && !opt.method;
+  let post = arc && url.length > 1800, last;
+  for(let n = 0; n < tries; n++){
+    try { const {j, txt} = await fetchOnce(url, opt, ms, post); if(cache) cachePut(key, txt, "application/json"); return j; }
+    catch(e){ last = e; if(!retryable(e) || n === tries-1) break;
+      if(arc && !e.status && e.name !== "AbortError") post = !post; // network-level failure: try the other request shape
+      await sleep(350 * Math.pow(2, n) + Math.random()*250); }
+  }
+  throw last;
 }
 function toast(msg){ const t = $("#toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("on"), 2600); }
 
@@ -129,10 +154,21 @@ function dms(str){
   if(out.length===2){ const la=out.find(o=>/[NS]/.test(o.h)), lo=out.find(o=>/[EW]/.test(o.h)); if(la&&lo) return {lat:la.v,lng:lo.v}; }
   return null;
 }
+/* the city and house number the visitor typed, so a match in another city or on another house is caught */
+function addrAsk(text){ const t = String(text||"").toUpperCase().replace(/\s+/g," ").trim(), parts = t.split(/\s*,\s*/);
+  const num = (t.match(/^(\d{1,6})\s+[A-Z0-9]/) || [])[1] || null;
+  let city = null; if(parts.length >= 2){ const c = parts.slice(1).map(x=>x.replace(/\b(TX|TEXAS)\b|\d{5}(-\d{4})?/g,"").trim()).filter(Boolean); city = c[0] || null; }
+  return {num, city, street:parts[0].replace(/^\d+\s+/,"")}; }
+const ADDR_TYPES = /^(PointAddress|Subaddress|StreetAddress|StreetAddressExt|ParcelAddress)$/;
 async function geocode(text){
-  const j = await getJSON(CONFIG.geocoder + "/findAddressCandidates?" + qs({SingleLine:text, f:"json", maxLocations:1, countryCode:"USA", outFields:"Match_addr", searchExtent:"-106.7,25.8,-93.5,36.6"}));
-  const c = j.candidates && j.candidates[0]; if(!c || c.score < 75) return null;
-  return {lat:c.location.y, lng:c.location.x, label:c.attributes.Match_addr || c.address};
+  const j = await getJSON(CONFIG.geocoder + "/findAddressCandidates?" + qs({SingleLine:text, f:"json", maxLocations:5, countryCode:"USA", outFields:"Match_addr,Addr_type,City,AddNum", searchExtent:"-106.7,25.8,-93.5,36.6"}));
+  const all = (j.candidates||[]).filter(c=>c.score >= 75); if(!all.length) return null;
+  const ask = addrAsk(text), sameCity = c => !ask.city || String((c.attributes||{}).City||"").toUpperCase() === ask.city;
+  // a rooftop or parcel point in the city asked for beats a higher-scoring street or ZIP match elsewhere
+  const rank = c => (sameCity(c) ? 4 : 0) + (/^(PointAddress|Subaddress|ParcelAddress)$/.test((c.attributes||{}).Addr_type) ? 2 : ADDR_TYPES.test((c.attributes||{}).Addr_type) ? 1 : 0) + c.score/1000;
+  const c = all.slice().sort((m,n)=>rank(n)-rank(m))[0], at = c.attributes||{};
+  return {lat:c.location.y, lng:c.location.x, label:at.Match_addr || c.address, addrType:at.Addr_type || null, foundCity:at.City || null,
+    askCity:ask.city, askNum:ask.num, askStreet:ask.street, cityMismatch:!!(ask.city && at.City && !sameCity(c))};
 }
 async function parseLocation(raw){
   const s = raw.trim(); if(!s) throw new Error("Enter an address, coordinates, a plus code or a map link.");
@@ -276,7 +312,7 @@ function parseTiff(buf){
 }
 
 /* ===== Live lookups (each fails closed on its own) ===== */
-function fmtAddr(t){ const m = String(t).replace(/(\d{5})\d{4}\s*$/,"$1").split(/\s*,\s*/).filter(Boolean); if(!m.length) return null;
+function fmtAddr(t){ const m = String(t).replace(/(\d{5})\d{4}\s*$/,"$1").replace(/[\s,]+0{5,}\s*$/,"").replace(/\s+(TX|TEXAS)\s*$/i,", TX").replace(/\s+(TX|TEXAS)\s+(\d{5})\s*$/i,", TX $2").split(/\s*,\s*/).filter(Boolean); if(!m.length) return null;
   return m.map(x=>/^(TX|TEXAS)(\s+\d{5})?$/i.test(x) ? x.toUpperCase().replace("TEXAS","TX") : titleCase(x)).join(", "); }
 function normParcel(r){
   const a = {}; for(const [k,v] of Object.entries(r.attributes||{})) a[k.toUpperCase()] = (v === "Null" || v === "") ? null : v;
@@ -306,7 +342,24 @@ async function fetchParcelAtTx(p){
   const fb = fallbackFor(p); if(!fb) return null;
   try { return (await fallbackQuery(fb, p.lng+","+p.lat, "esriGeometryPoint", 10000))[0] || null; } catch(_){ return null; }
 }
-async function fetchNeighbors(env, exceptOid){
+/* does the appraisal roll's situs address carry the house number and street the visitor typed? */
+const streetKey = t => String(t||"").toUpperCase().replace(/,.*$/,"").replace(/^\d+[A-Z]?\s+/,"").replace(/\b(N|S|E|W|NORTH|SOUTH|EAST|WEST|STREET|ST|ROAD|RD|DRIVE|DR|AVENUE|AVE|BOULEVARD|BLVD|PARKWAY|PKWY|LANE|LN|HIGHWAY|HWY|COURT|CT|CIRCLE|CIR|PLACE|PL|TRAIL|TRL|WAY)\b/g,"").replace(/[^A-Z0-9]/g,"");
+function situsMatches(situs, p){ if(!situs || !p.askNum) return false; const num = (String(situs).match(/^\s*(\d+)/) || [])[1];
+  return num === p.askNum && (!p.askStreet || streetKey(situs) === streetKey(p.askStreet) || streetKey(situs).includes(streetKey(p.askStreet)) || streetKey(p.askStreet).includes(streetKey(situs))); }
+async function parcelByAddress(c, p){ const d = 0.0018, env = [c.lng-d, c.lat-d, c.lng+d, c.lat+d];
+  const near = await fetchNeighborsRaw(env, null), hits = near.filter(x=>situsMatches(x.situs, p));
+  if(!hits.length) return null; const P = proj(c);
+  hits.sort((m,n)=>Math.hypot(...centroid(m.ringsLL.map(r=>r.map(P.f)))) - Math.hypot(...centroid(n.ringsLL.map(r=>r.map(P.f))))); return hits[0]; }
+/* condo and stacked accounts repeat one outline many times; keep one per outline and note the other owners */
+function dedupeParcels(list){ const by = new Map();
+  for(const p of list){ const r = p.ringsLL && p.ringsLL[0] || [], bb = bbox(p.ringsLL || []);
+    const key = bb.map(v=>v.toFixed(5)).join(",") + ":" + r.length, hit = by.get(key);
+    if(!hit){ by.set(key, {...p, owners:p.owner ? [p.owner] : []}); continue; }
+    if(p.owner && !hit.owners.includes(p.owner)) hit.owners.push(p.owner);
+    hit.stacked = (hit.stacked || 1) + 1; }
+  return [...by.values()].map(q=>{ if(q.owners.length > 1) q.owner = `${q.owners[0]} + ${q.owners.length-1} MORE`; delete q.owners; return q; }); }
+async function fetchNeighbors(env, exceptOid){ return dedupeParcels(await fetchNeighborsRaw(env, exceptOid)); }
+async function fetchNeighborsRaw(env, exceptOid){
   const fb = fallbackFor({lng:(env[0]+env[2])/2, lat:(env[1]+env[3])/2});
   // fall back only when the statewide feed has no parcels here at all; a tract whose only statewide hit is itself
   // must not be re-read from the county layer, where its id differs and it would come back as its own neighbor
@@ -343,7 +396,7 @@ function floodFlags(f){ if(!f || f.status!=="ok") return []; const out = [];
 function zoneName(a){ if(!a) return null; if(/FLOODWAY/i.test(a.ZONE_SUBTY||"")) return "AE floodway"; if(/0\.2/.test(a.ZONE_SUBTY||"")) return "X (0.2% annual chance)"; if(a.FLD_ZONE==="X") return "X (minimal)"; return a.FLD_ZONE; }
 async function fetchWetlands(envLL){
   const j = await getJSON(CONFIG.nwi + "/query?" + qs({geometry:envLL.join(","), geometryType:"esriGeometryEnvelope", inSR:4326, spatialRel:"esriSpatialRelIntersects", outFields:"ATTRIBUTE,WETLAND_TYPE",
-    returnGeometry:true, outSR:4326, geometryPrecision:6, maxAllowableOffset:0.000005, resultRecordCount:400, f:"json"}), {}, 14000);
+    returnGeometry:true, outSR:4326, geometryPrecision:6, maxAllowableOffset:0.00001, resultRecordCount:300, f:"json"}), {}, 10000);
   return (j.features||[]).filter(f=>f.geometry&&f.geometry.rings).map(f=>({code:f.attributes.ATTRIBUTE, type:f.attributes.WETLAND_TYPE, ringsLL:f.geometry.rings}));
 }
 async function fetchWater(envLL){
@@ -388,12 +441,12 @@ async function fetchLines(c, mi){
   const d = mi*5280/FT/R*180/Math.PI, k = Math.cos(c.lat*Math.PI/180);
   const env = [c.lng-d/k, c.lat-d, c.lng+d/k, c.lat+d];
   const j = await getJSON(CONFIG.lines + "/query?" + qs({geometry:env.join(","), geometryType:"esriGeometryEnvelope", inSR:4326, spatialRel:"esriSpatialRelIntersects", outFields:"VOLTAGE,VOLT_CLASS,STATUS",
-    returnGeometry:true, outSR:4326, geometryPrecision:6, maxAllowableOffset:0.00002, f:"json"}), {}, 14000);
+    returnGeometry:true, outSR:4326, geometryPrecision:5, maxAllowableOffset:0.0002, resultRecordCount:300, f:"json"}), {}, 10000);
   return (j.features||[]).filter(f=>f.geometry&&f.geometry.paths).map(f=>({kv:f.attributes.VOLTAGE>0?f.attributes.VOLTAGE:null, cls:f.attributes.VOLT_CLASS, status:f.attributes.STATUS, pathsLL:f.geometry.paths}));
 }
 async function fetchRoads(envLL, n){
   if(!n){ const j = await getJSON(CONFIG.roadsTx + "/query?" + qs({geometry:envLL.join(","), geometryType:"esriGeometryEnvelope", inSR:4326, spatialRel:"esriSpatialRelIntersects",
-      outFields:"RTE_NM,MAP_LBL", returnGeometry:true, outSR:4326, geometryPrecision:6, resultRecordCount:2000, f:"json"}), {}, 9000);
+      outFields:"RTE_NM,MAP_LBL", returnGeometry:true, outSR:4326, geometryPrecision:6, maxAllowableOffset:0.00001, resultRecordCount:1500, f:"json"}), {}, 9000);
     const nm = a => { const v = nul(a.MAP_LBL) || nul(a.RTE_NM); return v ? titleCase(String(v)) : null; };
     const out = []; for(const f of (j.features||[])) if(f.geometry && f.geometry.paths) for(const p of f.geometry.paths) if(p.length > 1) out.push({name:nm(f.attributes||{}), pathLL:p});
     out.src = "TxDOT"; return out; }
@@ -428,23 +481,46 @@ function deedFrom(attrs){ if(!attrs) return null; const a = {}; for(const [k,v] 
   if(inst) return {inst};
   if(vol && pg) return {vol:vol.replace(/^0+(?=\d)/,""), pg:pg.replace(/^0+(?=\d)/,"")};
   const legal = Object.keys(a).filter(k=>/^LEGAL_?\d$/.test(k)).sort().map(k=>a[k]||"").join(" ").trim();
-  if(legal){ const r = parseLegal(legal); if(r.instrument) return {inst:r.instrument}; if(r.vpRaw) return {vol:r.vpRaw[0], pg:r.vpRaw[1]}; }
+  if(legal){ const r = parseLegal(legal), dd = deedDate(legal); if(r.instrument) return {inst:r.instrument, date:dd}; if(r.vpRaw) return {vol:r.vpRaw[0], pg:r.vpRaw[1], date:dd}; }
   return null; }
+/* Dallas CAD writes the deed date after the reference: "DD05192017" (MMDDYYYY) or "DD051794" (MMDDYY) */
+function deedDate(t){ const m = String(t||"").toUpperCase().match(/\bDD(\d{2})(\d{2})(\d{4}|\d{2})\b/); if(!m) return null;
+  let [_, mo, dy, yr] = m; if(yr.length === 2) yr = (+yr > 40 ? "19" : "20") + yr; if(+mo < 1 || +mo > 12 || +dy < 1 || +dy > 31) return null; return `${mo}/${dy}/${yr}`; }
+const deedSrcOf = county => { const d = CONFIG.deeds[String(county||"").toUpperCase()]; return d ? (typeof d === "string" ? {url:d} : d) : null; };
 function deedRef(p, county){ if(!p) return null; const ca = countyAbbr(p.county || county), d = p.deed, r = d ? {} : parseLegal(p.legal);
   const inst = d ? d.inst : r.instrument, vol = d ? d.vol : r.vpRaw && r.vpRaw[0], pg = d ? d.pg : r.vpRaw && r.vpRaw[1];
   if(inst) return `INST. NO. ${inst}` + (ca ? ` O.P.R.${ca}C.T.` : "");
   if(vol && pg) return `VOL. ${vol}, PG. ${pg}` + (ca ? ` D.R.${ca}C.T.` : "");
   return null; }
 /* read the deed reference for the tract and its adjoiners from the county layer, a point inside each parcel */
-async function fetchDeed(s, p, url){ const ll = s.P.i(interiorPoint(p.rings || p.ringsLL.map(r=>r.map(s.P.f))));
-  const j = await getJSON(url + "/query?" + qs({geometry:ll[0].toFixed(7)+","+ll[1].toFixed(7), geometryType:"esriGeometryPoint", inSR:4326, spatialRel:"esriSpatialRelIntersects",
+async function fetchDeed(s, p, src){ const rings = p.rings || p.ringsLL.map(r=>r.map(s.P.f));
+  if(src.points){ // one point per tax account: read the parcel's box, keep the points that fall inside the parcel
+    const [x0,y0,x1,y1] = bbox(rings), a = s.P.i([x0,y0]), b = s.P.i([x1,y1]);
+    const j = await getJSON(src.url + "/query?" + qs({geometry:[a[0],a[1],b[0],b[1]].map(v=>v.toFixed(6)).join(","), geometryType:"esriGeometryEnvelope", inSR:4326,
+      spatialRel:"esriSpatialRelIntersects", outFields:src.fields || "*", returnGeometry:true, outSR:4326, resultRecordCount:60, f:"json"}), {}, 8000);
+    const inside = (j.features||[]).filter(f=>f.geometry && inRings(...s.P.f([f.geometry.x, f.geometry.y]), rings));
+    // the account with a current appraisal year and a deed reference wins; condo and stacked accounts share one parcel
+    inside.sort((m,n)=>((n.attributes||{}).AppraisalYr||0) - ((m.attributes||{}).AppraisalYr||0));
+    for(const f of inside){ const at = f.attributes||{}, d = deedFrom(at); if(!d) continue;
+      d.src = src.label; d.yr = at.AppraisalYr || null; d.legal = [at.Legal1, at.Legal2, at.Legal3].map(v=>String(v||"").trim()).filter(Boolean).join(" ") || null; d.accounts = inside.length; return d; }
+    return null; }
+  const ll = s.P.i(interiorPoint(rings));
+  const j = await getJSON(src.url + "/query?" + qs({geometry:ll[0].toFixed(7)+","+ll[1].toFixed(7), geometryType:"esriGeometryPoint", inSR:4326, spatialRel:"esriSpatialRelIntersects",
     outFields:"*", returnGeometry:false, resultRecordCount:3, f:"json"}), {}, 8000);
-  for(const f of (j.features||[])){ const d = deedFrom(f.attributes); if(d) return d; } return null; }
+  for(const f of (j.features||[])){ const d = deedFrom(f.attributes); if(d){ d.src = src.label || null; return d; } } return null; }
+/* City of Dallas plat record at a point inside the tract, reference only */
+const PLAT_STATUS = {1:"preliminary", 2:"final", 3:"historic", 4:"early release", 5:"withdrawn", 6:"expired"};
+async function fetchDallasPlat(s, p){ const rings = p.rings || p.ringsLL.map(r=>r.map(s.P.f)), ll = s.P.i(interiorPoint(rings));
+  const j = await getJSON(CONFIG.dallasPlats + "/query?" + qs({geometry:ll[0].toFixed(7)+","+ll[1].toFixed(7), geometryType:"esriGeometryPoint", inSR:4326, spatialRel:"esriSpatialRelIntersects",
+    outFields:"NAME,LOT_NO,BASEBLOCK,CASE_NO,STATUS,DOCUMENT_NUMBER", returnGeometry:false, resultRecordCount:5, f:"json"}), {}, 8000);
+  const rows = (j.features||[]).map(f=>f.attributes||{}).filter(a=>a.NAME && ![5,6].includes(+a.STATUS));
+  rows.sort((m,n)=>(+n.STATUS===2)-(+m.STATUS===2)); const a = rows[0]; if(!a) return null;
+  return {name:String(a.NAME).trim(), lot:nul(a.LOT_NO), block:nul(a.BASEBLOCK), caseNo:nul(a.CASE_NO), doc:nul(a.DOCUMENT_NUMBER), status:PLAT_STATUS[+a.STATUS] || null}; }
 async function enrichDeeds(s, list){
-  const todo = list.filter(p=>p && !p.deed && !p._deedTried && CONFIG.deeds[String(p.county || s.county || "").toUpperCase()]); if(!todo.length) return false;
+  const todo = list.filter(p=>p && !p.deed && !p._deedTried && deedSrcOf(p.county || s.county)); if(!todo.length) return false;
   let got = 0, i = 0; const t0 = performance.now();
   const worker = async () => { while(i < todo.length && performance.now()-t0 < 12000){ const p = todo[i++]; p._deedTried = true;
-    try { const d = await fetchDeed(s, p, CONFIG.deeds[String(p.county || s.county).toUpperCase()]); if(d){ p.deed = d; got++; } } catch(_){} } };
+    try { const d = await fetchDeed(s, p, deedSrcOf(p.county || s.county)); if(d){ p.deed = d; if(!p.legal && d.legal) p.legal = d.legal; got++; } } catch(_){} } };
   await Promise.all([worker(), worker(), worker(), worker()]); return got > 0; }
 /* "INST. NO. 2019… O.P.R.D.C.T." prints as two lines on the sheet, the record abbreviation under the number */
 const splitRecord = t => { const m = String(t).match(/^(.*?)\s+((?:O\.P|D|M|P)\.R\.[A-Z.]*C\.T\.)$/); return m ? [m[1], m[2]] : [t]; };
@@ -635,6 +711,9 @@ async function runLive(raw, opts={}){
   let parcel;
   try { parcel = await fetchParcelAt(center); }
   catch(e){ throw new Error("The statewide parcel service didn't answer, so nothing was drawn. Try again in a minute, use Sketch a tract, or call (469) 317-0250."); }
+  // an address that lands on the street, or on the house next door, is moved to the parcel the roll lists at that address
+  if(p.kind === "Address" && p.askNum && (!parcel || !situsMatches(parcel.situs, p))){
+    try { const near = await parcelByAddress(center, p); if(near) parcel = near; } catch(_){} }
   if(!parcel || !parcel.ringsLL.length){
     if(!inTexasOutline(center)) throw Object.assign(new Error("That point is outside Texas, or offshore. This screen covers Texas land only."), {outside:true});
     let wet = []; try { const d = 0.0004; wet = await fetchWetlands([center.lng-d, center.lat-d, center.lng+d, center.lat+d]); } catch(_){}
@@ -643,7 +722,7 @@ async function runLive(raw, opts={}){
     return siteFromPin(center, raw, p.kind); }
   const rings = parcel.ringsLL.map(r=>r.map(P.f));
   const c2 = P.i(centroid(rings)); const center2 = {lat:c2[1], lng:c2[0]}, P2 = proj(center2);
-  const s = newSite({sample:false, input:raw, kind:p.kind, label:p.label, center:center2, P:P2, rings:parcel.ringsLL.map(r=>r.map(P2.f)), county:parcel.county, legal:parcel.legal, propId:parcel.propId,
+  const s = newSite({sample:false, input:raw, kind:p.kind, label:p.label, geo:p.kind==="Address" ? {cityMismatch:p.cityMismatch, foundCity:p.foundCity, askCity:p.askCity, askNum:p.askNum, askStreet:p.askStreet} : null, center:center2, P:P2, rings:parcel.ringsLL.map(r=>r.map(P2.f)), county:parcel.county, legal:parcel.legal, propId:parcel.propId,
     situs:parcel.situs, source:parcel.source, taxYear:parcel.taxYear, legalAcres:parcel.legalAcres, oid:parcel.oid, parcels:[parcel]});
   s.title = parcel.situs || (p.label && p.kind==="Address" ? p.label : (s.refs.addition ? s.refs.addition : "Parcel " + (parcel.propId||"")));
   s.area = (parcel.county ? titleCase(parcel.county) + " County" : "Texas");
@@ -689,12 +768,12 @@ async function screenLayers(s, only){
   const L = s.layers, ringsLL = s.rings.map(r=>r.map(s.P.i));
   const [x0,y0,x1,y1] = s.frame, a = s.P.i([x0,y0]), b = s.P.i([x1,y1]), env = [a[0],a[1],b[0],b[1]];
   const c = s.center, toFt = rr => rr.map(r=>r.map(s.P.f));
-  // each layer gets a fixed time budget: one quick retry, then "Not read this time". A slow layer never holds up the rest.
+  // each layer gets a fixed time budget: up to two quick retries, then "Not read this time". A slow layer never holds up the rest.
   const job = async (key, fn) => { if(only && !only.includes(key)) return; setStatus(key,"wait"); L[key] = {status:"wait"}; renderReadout(s); const t0 = performance.now();
     for(let n = 0; ; n++){ try { const left = JOB_BUDGET - (performance.now()-t0); if(left < 1200) throw new Error("out of time");
         const r = await withTimeout(fn(n), left); L[key] = {...r, status:r._status||"ok"}; break; }
       catch(e){ const msg = String(e.message||e), final = /no elevation cells|out of time/.test(msg);
-        if(final || n >= 1 || s !== current || performance.now()-t0 > JOB_BUDGET-2500){ L[key] = {status:"fail", err:msg}; break; }
+        if(final || n >= 2 || s !== current || performance.now()-t0 > JOB_BUDGET-2500){ L[key] = {status:"fail", err:msg}; break; }
         await sleep(400 + Math.random()*300); } }
     if(s !== current) return; setStatus(key, L[key].status==="none" ? "na" : L[key].status); renderReadout(s); drawSheet(s); renderInsights(s); if(key==="adj") renderMatch(s);
     if(s._settled) refreshAfterLayer(s); };
@@ -704,7 +783,8 @@ async function screenLayers(s, only){
       const fs = floodStats(s, polys);
       if((!polys.length || fs.cover < 0.02) && !f.pointZone) return {_status:"none", polys:[], noneText:"No FEMA flood map covers this area (unmapped, not cleared)", firm:f.firm};
       return {polys, pointZone:f.pointZone, panel:f.panel, firm:f.firm, ...fs}; }),
-    job("wet", async()=>{ const w = await fetchWetlands(env); const polys = w.map(p=>({...p, rings:fitRings(toFt(p.ringsLL), s.frame)})).filter(p=>p.rings.length); return {polys, ...wetStats(s, polys)}; }),
+    job("wet", async()=>{ const [wx0,wy0,wx1,wy1] = bbox(s.rings), wp = 900, wa = s.P.i([wx0-wp,wy0-wp]), wb = s.P.i([wx1+wp,wy1+wp]);
+      const w = await fetchWetlands([Math.min(wa[0],wb[0]), Math.min(wa[1],wb[1]), Math.max(wa[0],wb[0]), Math.max(wa[1],wb[1])]); const polys = w.map(p=>({...p, rings:fitRings(toFt(p.ringsLL), s.frame)})).filter(p=>p.rings.length); return {polys, ...wetStats(s, polys)}; }),
     job("water", async()=>{ const w = await fetchWater(env); const items = w.map(i=>({name:i.name, paths:i.paths?toFt(i.paths):null, rings:i.ringsLL?fitRings(toFt(i.ringsLL), s.frame):null}));
       return waterStats(s, items); }),
     job("soils", async()=>({units: await fetchSoils(ringsLL)})),
@@ -722,7 +802,12 @@ async function screenLayers(s, only){
   ];
   // deed references from the county record, best effort; never part of the layer count
   const deeds = (async () => { if(s.pin || s.sample || s.sketch) return; await Promise.all(tasks);
-    const list = [...(s.parcels||[]), ...adjoinersOf(s)]; if(await enrichDeeds(s, list) && s === current){ drawSheet(s); renderBrief(s); renderReadout(s); } })();
+    const list = [...(s.parcels||[]), ...adjoinersOf(s)];
+    const platP = String(s.county||"").toUpperCase() === "DALLAS" && s.parcels && s.parcels.length === 1 ? fetchDallasPlat(s, s.parcels[0]).catch(()=>null) : Promise.resolve(null);
+    const got = await enrichDeeds(s, list), plat = await platP; if(plat) s.plat = plat;
+    // the statewide feed can carry a blank legal description; the county record fills it in
+    if(s.parcels && s.parcels.length === 1 && !s.legal && s.parcels[0].legal){ s.legal = s.parcels[0].legal; s.refs = parseLegal(s.legal); }
+    if((got || plat) && s === current){ drawSheet(s); renderBrief(s); renderReadout(s); renderMatch(s); } })();
   const run = Promise.all(tasks); s._run = run; await run; deeds.catch(()=>{});
   if(s === current) renderStatus(s);
 }
@@ -1181,7 +1266,7 @@ function renderBrief(s){ if(s===current) setTimeout(updRec, 0);
   const L = s.layers, rec = recommend(s), rows = [];
   const row = (k, finding, limit, src, st) => rows.push(`<tr><td class="k">${k}</td><td>${st==="ok"?pinWords(s,finding):`<span class="na">${st==="wait"?"Loading.":st==="none"?"Nothing mapped.":"Not read this time."}</span> ${st==="none"?esc(failText(L[KEYOF[k]])):""}`}<div class="limit">${limit}</div></td><td class="src">${src}</td></tr>`);
   const st = k => L[k] ? L[k].status : "wait";
-  row("Parcel", s.pin ? `No appraisal parcel at the pin (${s.center.lat.toFixed(6)}, ${s.center.lng.toFixed(6)}). The layers below were read for ${PIN_R} ft around it; they describe that circle, not a tract.` : `${s.sample?acTxt(s.acres)+" acres (illustrative)":esc(acreLine(s))}.${acreage(s).gap?` <b>${esc(acreage(s).gap)}</b>`:""} ${s.legal?esc(s.legal):""}${!s.sketch && s.parcels && s.parcels.length ? " Owner of record: " + esc(s.parcels.map(p=>p.owner||"not listed").join("; ")) + "." : ""}${!s.sketch && s.parcels && s.parcels.length === 1 && deedRef(s.parcels[0], s.county) ? " Deed: " + esc(deedRef(s.parcels[0], s.county).replace(/\.$/,"")) + "." : ""}${s.parent?` Outline is part of appraisal parcel ${esc(s.parent.propId||"")}.`:""}`, "An appraisal map, drawn for taxes. Lines can be off by tens of feet. Not a boundary. Acreage by source.", s.sample?"Illustrative sample":esc(s.pin?"TxGIO StratMap Land Parcels (no match)":s.parcels && s.parcels[0] && s.parcels[0].via ? s.parcels[0].via + (s.parcels[0].deed ? "; deed reference from the same record" : "") : `${s.parcels && s.parcels.some(p=>p.deed) ? "Deed reference from the county appraisal district record; outline from " : ""}TxGIO StratMap Land Parcels, from ${titleCase(s.source||"county appraisal district")}${s.taxYear?", tax year "+s.taxYear:""}`), "ok");
+  row("Parcel", s.pin ? `No appraisal parcel at the pin (${s.center.lat.toFixed(6)}, ${s.center.lng.toFixed(6)}). The layers below were read for ${PIN_R} ft around it; they describe that circle, not a tract.` : `${s.sample?acTxt(s.acres)+" acres (illustrative)":esc(acreLine(s))}.${acreage(s).gap?` <b>${esc(acreage(s).gap)}</b>`:""} ${s.legal?esc(s.legal):""}${!s.sketch && s.parcels && s.parcels.length ? " Owner of record: " + esc(s.parcels.map(p=>p.owner||"not listed").join("; ")) + "." : ""}${!s.sketch && s.parcels && s.parcels.length === 1 ? esc(deedLine(s)) : ""}${s.plat ? " " + esc(platLine(s.plat)) : ""}${s.parent?` Outline is part of appraisal parcel ${esc(s.parent.propId||"")}.`:""}`, "An appraisal map, drawn for taxes. Lines can be off by tens of feet. Not a boundary. Acreage by source.", s.sample?"Illustrative sample":esc(s.pin?"TxGIO StratMap Land Parcels (no match)":s.parcels && s.parcels[0] && s.parcels[0].via ? s.parcels[0].via + (s.parcels[0].deed ? "; deed reference from the same record" : "") : `${deedSourceText(s)}${s.plat ? "City of Dallas plat parcels (reference only); " : ""}${s.parcels && s.parcels.some(p=>p.deed) ? "outline from " : ""}TxGIO StratMap Land Parcels, from ${titleCase(s.source||"county appraisal district")}${s.taxYear?", tax year "+s.taxYear:""}`), "ok");
   if(!s.pin && !s.sample){ const adj = adjoinersOf(s), st0 = L.adj ? (L.adj.status==="ok" ? "ok" : L.adj.status) : "wait";
     row("Adjoiners", adj.length ? `<ul class="adj-list">${adj.slice(0,20).map(n=>`<li>${esc(recordLines(n, s.county).join(" · ") || "Owner not listed")}${n.propId?` <span class="opt">(ID ${esc(n.propId)})</span>`:""}</li>`).join("")}</ul>` : "No neighboring appraisal parcel shares a mapped line with the tract.",
       "Parcels whose appraisal-map lines run along the tract's line for 20 ft or more. Owner and record from the appraisal roll; deed references from the county appraisal district record where it publishes them, otherwise from the legal description. A survey confirms the actual adjoiners from the deeds.", "TxGIO StratMap Land Parcels (county appraisal rolls)", st0==="none"?"ok":st0); }
@@ -1261,6 +1346,15 @@ function renderListBtn(s){ const b = $("#btnList"); if(!b) return; b.hidden = !!
 const headTitle = s => s.sample ? s.title : s.pin ? "Near this pin" : s.sketch ? s.title : s.kind === "Address" && s.input && s.parcels && s.parcels.length === 1 ? fmtEntered(s.input) : s.title;
 const fmtEntered = t => { const v = String(t||"").trim(); return v.length > 90 ? v.slice(0,88) + "…" : v; };
 
+/* deed and plat lines for the record row: every value names its source, and a missing record says so */
+function deedLine(s){ const p = s.parcels[0], d = deedRef(p, s.county);
+  if(d) return ` Deed: ${d.replace(/\.$/,"")}${p.deed && p.deed.date ? `, dated ${p.deed.date}` : ""}.`;
+  if(p._deedTried && deedSrcOf(s.county)) return " Deed reference: not published on the current appraisal record. Ask us and we will pull it.";
+  return ""; }
+function deedSourceText(s){ const d = s.parcels && s.parcels.map(p=>p.deed).find(Boolean); if(!d) return "";
+  return `Deed reference from ${d.src || "the county appraisal district record"}${d.yr ? `, appraisal year ${d.yr}` : ""}; `; }
+const platLine = pl => `City plat record (reference only): ${titleCase(pl.name)}${pl.lot ? `, lot ${pl.lot}` : ""}${pl.block ? `, block ${pl.block}` : ""}${pl.doc ? `, county document ${pl.doc}` : ""}${pl.status ? ` (${pl.status})` : ""}.`;
+
 /* ===== "Is this the tract you mean?" ===== */
 const CONFIRM_TXT = {whole:"Yes, the whole parcel", more:"More than this parcel", part:"Only part of it", unsure:"Not sure yet"};
 const normAddr = t => String(t||"").toUpperCase().replace(/,.*$/,"").replace(/\b(STREET|ST|ROAD|RD|DRIVE|DR|AVENUE|AVE|BOULEVARD|BLVD|PARKWAY|PKWY|LANE|LN|HIGHWAY|HWY)\b/g,"").replace(/[^A-Z0-9]/g,"");
@@ -1272,7 +1366,10 @@ function renderMatch(s){
   else if(s.sketch) matched = `<b>Your outline, about ${acTxt(s.acres)} acres.</b>${s.parent ? ` Part of appraisal parcel ${esc(s.parent.propId||"")}${s.parent.situs?` (${esc(s.parent.situs)})`:""}, ${acTxt(s.parent.acres)} acres drawn.` : ""}`;
   else if(s.parcels.length > 1) matched = `<b>${s.parcels.length} appraisal parcels combined, about ${acTxt(s.acres)} acres.</b> IDs ${esc(s.parcels.map(p=>p.propId).filter(Boolean).join(", "))}${s.county?` · ${esc(titleCase(s.county))} County`:""}`;
   else { matched = `<b>${esc(s.situs || "No address on the appraisal roll")}</b> · Appraisal ID ${esc(s.propId||"–")}${s.county?` · ${esc(titleCase(s.county))} County`:""}${s.legal?`<br><span class="opt">${esc(String(s.legal).slice(0,140))}</span>`:""}`;
-    if(s.kind === "Address" && s.situs && normAddr(s.situs) !== normAddr(s.input)) note = `The appraisal roll lists this parcel as ${titleCase(s.situs)}.`; }
+    const g = s.geo || {};
+    if(g.cityMismatch) note = `We found this address in ${titleCase(g.foundCity)}, not ${titleCase(g.askCity)}. If that's not the place, choose "Not this one" or add the ZIP code.`;
+    else if(s.kind === "Address" && g.askNum && s.situs && !situsMatches(s.situs, g)) note = `The appraisal roll lists this parcel as ${titleCase(s.situs)}, not the address you typed. Check that it's the right one.`;
+    else if(s.kind === "Address" && s.situs && normAddr(s.situs) !== normAddr(s.input)) note = `The appraisal roll lists this parcel as ${titleCase(s.situs)}.`; }
   const a = acreage(s), acr = a.rows.length ? `<div class="m-acres">${a.rows.map(([l,v])=>`<span><i>${esc(l)}</i><b>${acTxt(v)} ac</b></span>`).join("")}</div>${a.gap?`<p class="m-gap">${esc(a.gap)}</p>`:""}` : "";
   const picks = (s.pin || s._showPicks) && s.layers.adj && s.layers.adj.status==="ok" ? pickItems(s.layers.adj.items, s.P) : "";
   const q = s.pin ? `<div class="m-q"><span>Pick a nearby parcel, or draw the land you mean.</span><div class="m-btns"><button type="button" class="btn btn-red btn-sm" data-m="sketch">Outline your tract</button></div></div>`
@@ -1467,7 +1564,10 @@ async function submitRequest(e){
   const geometry = s && !s.sample ? tractGeometry(s) : null;
   if(geometry && !geometryIntact(s, geometry)){ err.textContent = "The outline didn't save completely. Please draw it again, then send the request."; err.hidden = false; return; }
   const list = d.withList && LIST.length ? LIST.slice(-30).map(x=>({title:String(x.title).slice(0,120), url:String(x.url).slice(0,600), acres:x.acres})) : [];
-  const packet = { v:2, link: s ? shareURL(s) : null, geometry, screen_no: s ? screenNo(s) : null, title: s ? String(s.title).slice(0,160) : null, stage:STAGE, type:TYPE, list,
+  const p0 = s && s.parcels && s.parcels.length === 1 ? s.parcels[0] : null;
+  const record = p0 && !s.sketch ? { legal: clip(s.legal, 300), deed: deedRef(p0, s.county), deed_date: p0.deed && p0.deed.date || null, deed_source: p0.deed && p0.deed.src || null,
+    appraisal_year: p0.deed && p0.deed.yr || null, plat: s.plat ? clip(platLine(s.plat), 300) : null } : null;
+  const packet = { v:2, page:"screen", record, link: s ? shareURL(s) : null, geometry, screen_no: s ? screenNo(s) : null, title: s ? String(s.title).slice(0,160) : null, stage:STAGE, type:TYPE, list,
     failed_layers: s && !s.sample ? Object.keys(L).filter(k=>L[k] && L[k].status==="fail") : [], unmapped_layers: s && !s.sample ? Object.keys(L).filter(k=>L[k] && L[k].status==="none") : [],
     fema_effective: L.flood && L.flood.firm ? L.flood.firm.eff : null,
     entered: s ? clip(s.input, 300) : null, matched: s ? clip(s.pin ? "no parcel at pin" : s.sketch ? "sketched outline" : s.situs || s.title, 300) : null, tract_confirm: d.tract || null,

@@ -1,4 +1,4 @@
--- NOT APPLIED. Calls the packet-alert function for each new packet request.
+-- NOT APPLIED. Calls the packet-alert function for each new request from any tool page.
 -- Before applying: deploy the function, set its secrets, and replace
 -- <PROJECT_REF> and <HOOK_SECRET>. Store the secret in Vault rather than
 -- in this file if you prefer: select vault.create_secret('<HOOK_SECRET>', 'packet_hook_secret');
