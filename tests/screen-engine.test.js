@@ -117,3 +117,30 @@ test("two different parcels with the same box and vertex count stay separate", (
 test("TxDOT roads get one try so the OpenStreetMap fallback keeps its time", () => {
   assert.match(SRC, /resultRecordCount:1500, f:"json"\}\), \{\}, 9000, \{tries:1\}\)/);
 });
+
+test("a Dallas roll legal description fills a blank statewide one even with no deed in Legal4", async () => {
+  // stand-ins for the map read and the projection; the parcel is a unit square and the roll has one account point inside it
+  const extra = `const performance = { now: () => 0 };
+    const deedSrcOf = () => ({ points:true, url:"https://example.test/roll", label:"Dallas CAD tax account roll" });
+    const getJSON = async () => ({ features:[{ geometry:{x:0.5, y:0.5}, attributes:{ AccountID:"1", AppraisalYr:2026,
+      Legal1:"PRINCETON POINTE PH 1B REP", Legal2:"BLK G LOT 30", Legal3:"", Legal4:"" } }] });`;
+  const F = load(["qs", "inRings", "bbox", "blankNo", "parseLegal", "deedDate", "deedFrom", "fetchDeed", "enrichDeeds"], extra);
+  const s = { county:"DALLAS", P:{ f:p=>p, i:p=>p } };
+  const p = { county:"DALLAS", legal:"", rings:[[[0,0],[1,0],[1,1],[0,1],[0,0]]] };
+  const got = await F.enrichDeeds(s, [p]);
+  assert.equal(got, true);
+  assert.equal(p.deed, undefined);
+  assert.equal(p.legal, "PRINCETON POINTE PH 1B REP BLK G LOT 30");
+  assert.equal(p.legalFromRoll, true);
+});
+
+test("a statewide legal description is kept when the roll has one too", async () => {
+  const extra = `const performance = { now: () => 0 };
+    const deedSrcOf = () => ({ points:true, url:"https://example.test/roll", label:"Dallas CAD tax account roll" });
+    const getJSON = async () => ({ features:[{ geometry:{x:0.5, y:0.5}, attributes:{ AppraisalYr:2026, Legal1:"ROLL TEXT", Legal4:"" } }] });`;
+  const F = load(["qs", "inRings", "bbox", "blankNo", "parseLegal", "deedDate", "deedFrom", "fetchDeed", "enrichDeeds"], extra);
+  const p = { county:"DALLAS", legal:"STATEWIDE TEXT", rings:[[[0,0],[1,0],[1,1],[0,1],[0,0]]] };
+  await F.enrichDeeds({ county:"DALLAS", P:{ f:p=>p, i:p=>p } }, [p]);
+  assert.equal(p.legal, "STATEWIDE TEXT");
+  assert.equal(p.legalFromRoll, undefined);
+});
